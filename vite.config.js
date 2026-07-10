@@ -8,6 +8,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  base:'/google-form-clone/',
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
