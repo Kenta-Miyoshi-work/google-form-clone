@@ -1,165 +1,213 @@
-import { useMemo } from "react";
-import { FaCopy } from "react-icons/fa6";
+import { useRef, useState } from "react";
+import { FaArrowUpRightFromSquare, FaBolt, FaFileArrowUp, FaRotate } from "react-icons/fa6";
 
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 
-import { llmPromptExample } from "../../data/mockData";
-import { getJsonDiffSummary, normalizeForm, validateAuthoringForm } from "../../utils/formBuilderUtils";
+import { generateForm } from "../../utils/aiGeneration";
+import { normalizeForm, normalizeSections, toAuthoringForm, validateAuthoringForm } from "../../utils/formBuilderUtils";
 
+export function JsonAuthoringDialog({ open, onOpenChange, jsonText, setJsonText, jsonError, setJsonError, importJson, variant = "dialog" }) {
+  const [promptText, setPromptText] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [draftForm, setDraftForm] = useState(null);
+  const bottomRef = useRef(null);
 
-export function JsonAuthoringDialog({ open, onOpenChange, jsonTab, setJsonTab, jsonText, setJsonText, jsonError, prettyJson, copyJson, importJson, currentForm }) {
-  const validationPreview = useMemo(() => {
-    if (!jsonText.trim()) return { state: "empty", message: "JSONを貼り付けると、反映前チェックを表示します。" };
+  const scrollToBottom = () => {
+    window.requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+  };
+
+  const generateJson = async () => {
+    const trimmedPrompt = promptText.trim();
+    if (!trimmedPrompt) {
+      setGenerationError("生成したいフォームの内容を入力してください。");
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationError("");
+    setJsonError("");
+    const userMessage = { role: "user", text: trimmedPrompt };
+    setMessages((current) => [...current, userMessage]);
+    setPromptText("");
+
     try {
-      const parsed = JSON.parse(jsonText);
-      const errors = validateAuthoringForm(parsed);
-      if (errors.length > 0) return { state: "error", message: errors.join("\n") };
-      return {
-        state: "ok",
-        message: `反映できます。タイトル: ${parsed.title ?? "無題"} / セクション: ${parsed.sections?.length ?? 0} / 質問: ${parsed.questions?.length ?? 0}`,
-      };
+      const result = await generateForm({
+        prompt: trimmedPrompt,
+        currentForm: draftForm ? toAuthoringForm(normalizeForm(draftForm)) : null,
+      });
+
+      const validationErrors = validateAuthoringForm(result.form);
+      if (validationErrors.length > 0) throw new Error(`AIの生成結果を確認できませんでした。\n${validationErrors.join("\n")}`);
+
+      const nextJsonText = JSON.stringify(result.form, null, 2);
+      setJsonText(nextJsonText);
+      setDraftForm(result.form);
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: `フォームを作成しました。タイトルは「${result.form.title || "無題"}」、質問は ${result.form.questions?.length ?? 0} 件です。`,
+          form: result.form,
+        },
+      ]);
+      scrollToBottom();
     } catch (error) {
-      return { state: "error", message: error.message };
+      setGenerationError(error.message);
+      setMessages((current) => [...current, { role: "assistant", text: `失敗しました。${error.message}` }]);
+    } finally {
+      setIsGenerating(false);
     }
-  }, [jsonText]);
-  const diffPreview = useMemo(() => {
-    if (validationPreview.state !== "ok") return [];
-    try {
-      return getJsonDiffSummary(currentForm, normalizeForm(JSON.parse(jsonText)));
-    } catch {
-      return [];
+  };
+
+  const handlePromptKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      generateJson();
     }
-  }, [currentForm, jsonText, validationPreview.state]);
+  };
+
+  const applyDraftForm = () => {
+    if (!draftForm) return;
+    const nextJsonText = JSON.stringify(draftForm, null, 2);
+    setJsonText(nextJsonText);
+    importJson(nextJsonText);
+  };
+
+  const startOver = () => {
+    setMessages([]);
+    setDraftForm(null);
+    setPromptText("");
+    setGenerationError("");
+  };
+
+  const messageListMaxHeightClass = variant === "panel" ? "min-h-0 flex-1" : "max-h-[58vh]";
+
+  const chatBody = (
+    <div className={`rounded-lg border bg-slate-50 p-4 ${variant === "panel" ? "flex min-h-0 flex-1 flex-col gap-4" : "space-y-4"}`}>
+      <div className={`${messageListMaxHeightClass} space-y-4 overflow-y-auto rounded-lg bg-white p-4 shadow-sm`}>
+        {messages.length === 0 ? (
+          <div className="text-sm text-slate-500">
+            <p className="font-medium text-slate-700">どんなフォームを作りますか？</p>
+            <p className="mt-1">例: 「ピザパーティーの出欠と、希望の味を聞くフォームを作って」</p>
+          </div>
+        ) : (
+          messages.map((message, index) => (
+            <ChatBubble key={`${message.role}-${index}`} role={message.role} text={message.text} form={message.form} />
+          ))
+        )}
+        {isGenerating && <ChatBubble role="assistant" text={draftForm ? "フォームを修正しています..." : "フォームを作成しています..."} loading />}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className={`space-y-2 ${variant === "panel" ? "shrink-0" : ""}`}>
+        <div className="relative">
+          <Textarea
+            autoFocus
+            className="min-h-28 resize-none pb-10 text-sm"
+            value={promptText}
+            onChange={(event) => setPromptText(event.target.value)}
+            onKeyDown={handlePromptKeyDown}
+            placeholder={draftForm ? "例: 希望日時を複数選べるようにして、備考欄も追加して" : "作りたいフォームの用途、聞きたいことを入力してください"}
+          />
+          <Button variant="outline" size="xs" className="absolute bottom-2 right-2 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800" disabled={isGenerating} onClick={generateJson}>
+            <FaBolt />{isGenerating ? "送信中..." : "チャットを送信"}
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button className="bg-purple-600 hover:bg-purple-700" disabled={!draftForm} onClick={applyDraftForm}>
+            <FaArrowUpRightFromSquare className="mr-2" />このフォームを反映
+          </Button>
+          {messages.length > 0 && <Button variant="ghost" disabled={isGenerating} onClick={startOver}><FaRotate className="mr-2" />最初から</Button>}
+          <span className="ml-auto self-center text-xs text-slate-400">Enterで送信 / Shift+Enterで改行</span>
+        </div>
+        {generationError && <p className="whitespace-pre-line rounded-md bg-red-50 p-3 text-sm text-red-700">{generationError}</p>}
+        {jsonError && <p className="whitespace-pre-line rounded-md bg-red-50 p-3 text-sm text-red-700">{jsonError}</p>}
+      </div>
+    </div>
+  );
+
+  if (variant === "panel") {
+    if (!open) return null;
+    return (
+      <section className="flex h-[calc(100vh-7rem)] min-h-0 flex-col overflow-hidden rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="mb-3 shrink-0">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">AIチャット</h3>
+            <p className="text-xs text-slate-500">AIと相談しながら下書きを作成できます。</p>
+          </div>
+        </div>
+        {chatBody}
+      </section>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto" style={{ width: "96vw", maxWidth: "1280px" }}>
+      <DialogContent showCloseButton={false} className="max-h-[calc(100vh-2rem)] overflow-y-auto" style={{ width: "96vw", maxWidth: "1280px" }}>
         <DialogHeader>
-          <DialogTitle>フォーム作成JSON</DialogTitle>
-          <DialogDescription>IDなしのJSONを貼り付けてフォームを作成できます。</DialogDescription>
+          <DialogTitle>AIチャット</DialogTitle>
+          <DialogDescription>AIと相談しながら下書きを作り、プレビューを確認してから反映できます。</DialogDescription>
         </DialogHeader>
-
-        <div className="flex gap-2 border-b">
-          <JsonTabButton active={jsonTab === "json"} onClick={() => setJsonTab("json")}>JSON</JsonTabButton>
-          <JsonTabButton active={jsonTab === "guide"} onClick={() => setJsonTab("guide")}>使い方</JsonTabButton>
-        </div>
-
-        {jsonTab === "json" ? (
-          <div className="space-y-3">
-            <div className="rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-              このJSONはLLMに書かせるための作成用フォーマットです。内部IDは不要です。
-            </div>
-            <Textarea className="h-[52vh] min-h-80 resize-none font-mono text-xs" value={jsonText} onChange={(event) => setJsonText(event.target.value)} />
-            <div className={`whitespace-pre-line rounded-md p-3 text-sm ${validationPreview.state === "ok" ? "bg-green-50 text-green-700" : validationPreview.state === "error" ? "bg-amber-50 text-amber-700" : "bg-slate-50 text-slate-600"}`}>{validationPreview.message}</div>
-            {diffPreview.length > 0 && (
-              <div className="overflow-x-auto rounded-lg border bg-white">
-                <table className="w-full min-w-[620px] text-left text-sm">
-                  <thead className="border-b bg-slate-50 text-xs text-slate-500"><tr><th className="px-3 py-2">項目</th><th className="px-3 py-2">現在</th><th className="px-3 py-2">反映後</th><th className="px-3 py-2">差分</th></tr></thead>
-                  <tbody>{diffPreview.map((item) => <tr key={item.label} className="border-b"><td className="px-3 py-2 font-medium text-slate-900">{item.label}</td><td className="px-3 py-2 text-slate-600">{item.before}</td><td className="px-3 py-2 text-slate-600">{item.after}</td><td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs ${item.changed ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>{item.changed ? "変更あり" : "変更なし"}</span></td></tr>)}</tbody>
-                </table>
-              </div>
-            )}
-            {jsonError && <p className="whitespace-pre-line rounded-md bg-red-50 p-3 text-sm text-red-700">{jsonError}</p>}
-          </div>
-        ) : <JsonGuide />}
-
-        <DialogFooter>
-          {jsonTab === "json" && <Button variant="outline" onClick={() => setJsonText(prettyJson)}>現在のフォームを再読込</Button>}
-          {jsonTab === "json" && <Button variant="outline" onClick={copyJson}><FaCopy className="mr-2" />コピー</Button>}
-          <Button variant="outline" onClick={() => onOpenChange(false)}>クローズ</Button>
-          {jsonTab === "json" && <Button className="bg-purple-600 hover:bg-purple-700" onClick={importJson}>JSONを反映</Button>}
-        </DialogFooter>
+        {chatBody}
       </DialogContent>
     </Dialog>
   );
 }
 
-
-export function JsonTabButton({ active, onClick, children }) {
+export function ChatBubble({ role, text, form, loading = false }) {
   return (
-    <button type="button" onClick={onClick} className={`px-4 py-2 text-sm font-medium ${active ? "border-b-2 border-purple-600 text-purple-700" : "text-slate-500 hover:text-slate-900"}`}>
-      {children}
-    </button>
+    <div className={`flex ${role === "user" ? "justify-end" : "justify-start"}`}>
+      <div className={`max-w-[92%] rounded-lg px-4 py-3 text-sm leading-6 ${role === "user" ? "bg-purple-600 text-white" : "bg-slate-100 text-slate-800"}`}>
+        <p className={loading ? "animate-pulse" : ""}>{text}</p>
+        {form && <FormDraftPreview form={form} />}
+      </div>
+    </div>
   );
 }
 
-export function JsonGuide() {
-  const sampleJson = `{
-  "version": 1,
-  "title": "研修参加申請フォーム",
-  "description": "受講希望者の情報と希望日程を確認します。",
-  "settings": {
-    "visibility": "organization",
-    "deadline": "2026-07-31T17:00",
-    "acceptingResponses": true,
-    "themeColor": "#2563eb",
-    "backgroundColor": "#eef2ff",
-    "showProgress": true,
-    "collectEmail": true,
-    "limitOneResponse": true,
-    "allowEditAfterSubmit": false,
-    "sendReceipt": true,
-    "submitButtonLabel": "申請を送信",
-    "confirmationType": "custom",
-    "thankYouTitle": "申請を受け付けました",
-    "thankYouMessage": "事務局で確認後、メールで連絡します。"
-  },
-  "sections": [
-    { "title": "基本情報", "description": "回答者情報を入力します。" },
-    { "title": "希望内容", "description": "参加希望を入力します。" }
-  ],
-  "questions": [
-    { "section": "基本情報", "type": "shortText", "title": "氏名", "required": true, "placeholder": "山田 太郎", "validation": { "minLength": 2, "errorMessage": "氏名を入力してください" } },
-    { "section": "基本情報", "type": "email", "title": "連絡先メール", "required": true, "validation": { "format": "email" } },
-    { "section": "希望内容", "type": "radio", "title": "希望日程", "required": true, "options": ["7月15日", "7月22日"], "allowOther": true },
-    { "section": "希望内容", "type": "rating", "title": "期待度", "required": false, "scaleMin": 1, "scaleMax": 5, "scaleMinLabel": "低い", "scaleMaxLabel": "高い" },
-    { "section": "希望内容", "type": "consent", "title": "個人情報の取り扱い", "required": true, "consentText": "申請内容の確認に利用することに同意します。" }
-  ]
-}`;
+function FormDraftPreview({ form }) {
+  const preview = normalizeForm(form);
+  const sections = normalizeSections(preview.sections);
+  const typeLabel = { shortText: "記述式", radio: "1つ選択", checkbox: "複数選択", file: "ファイル" };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <div className="space-y-4">
-        <div className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-          <div className="font-medium text-slate-900">このJSON機能の目的</div>
-          <p className="mt-2">GUIで1問ずつ作らず、LLMにフォーム定義を書かせて貼り付けるための機能です。内部IDは自動生成されるので書く必要はありません。</p>
-        </div>
-        <div className="space-y-2 text-sm text-slate-600">
-          <div className="font-medium text-slate-900">使える質問タイプ</div>
-          <ul className="list-disc space-y-1 pl-5">
-            <li><code>shortText</code>: 短文</li>
-            <li><code>paragraph</code>: 長文</li>
-            <li><code>email</code> / <code>number</code> / <code>date</code> / <code>time</code>: 入力形式つき項目</li>
-            <li><code>radio</code>: 単一選択</li>
-            <li><code>checkbox</code>: 複数選択</li>
-            <li><code>select</code>: プルダウン</li>
-            <li><code>rating</code>: 評価スケール</li>
-            <li><code>matrix</code>: 行と列のグリッド</li>
-            <li><code>file</code>: 添付ファイルのモック</li>
-            <li><code>consent</code>: 同意チェック</li>
-          </ul>
-        </div>
-        <div className="space-y-2 text-sm text-slate-600">
-          <div className="font-medium text-slate-900">詳細設定を書く場合</div>
-          <p><code>placeholder</code>、<code>example</code>、<code>validation</code>、<code>allowOther</code>、<code>randomizeOptions</code>、<code>rows</code>、<code>columns</code> などを書けます。</p>
-        </div>
-        <div className="space-y-2 text-sm text-slate-600">
-          <div className="font-medium text-slate-900">分岐を書く場合</div>
-          <p><code>branch</code> に <code>option</code> と <code>targetSection</code> を書きます。送信完了へ進める場合は <code>targetSection</code> に「送信完了」と書きます。</p>
+    <div className="mt-3 overflow-hidden rounded-lg border bg-white shadow-sm">
+      <div className="border-t-4 px-4 py-3" style={{ borderTopColor: preview.settings?.themeColor || "#7c3aed" }}>
+        <div className="font-semibold text-slate-900">{preview.title || "無題のフォーム"}</div>
+        {preview.description && <p className="mt-1 text-xs leading-5 text-slate-500">{preview.description}</p>}
+        <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+          <span>{sections.length} セクション</span><span>・</span><span>{preview.questions.length} 問</span><span>・</span><span>必須 {preview.questions.filter((question) => question.required).length} 問</span>
         </div>
       </div>
-      <div className="space-y-4">
-        <div>
-          <div className="mb-2 text-sm font-medium text-slate-900">LLMに投げるプロンプト例</div>
-          <pre className="max-h-64 overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">{llmPromptExample}</pre>
-        </div>
-        <div>
-          <div className="mb-2 text-sm font-medium text-slate-900">最小JSON例</div>
-          <pre className="max-h-72 overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">{sampleJson}</pre>
-        </div>
+      <div className="max-h-72 space-y-3 overflow-y-auto border-t bg-slate-50 p-3">
+        {sections.map((section) => {
+          const questions = preview.questions.filter((question) => question.sectionId === section.id);
+          return (
+            <div key={section.id} className="space-y-2">
+              <div className="text-xs font-semibold text-purple-700">{section.title}</div>
+              {questions.map((question, index) => (
+                <div key={question.id} className="rounded-lg border bg-white p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="font-medium text-slate-800">{index + 1}. {question.title} {question.required && <span className="text-red-500">*</span>}</p>
+                    <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">{typeLabel[question.type] || question.type}</span>
+                  </div>
+                  {question.description && <p className="mt-1 text-xs text-slate-500">{question.description}</p>}
+                  {["radio", "checkbox"].includes(question.type) && <div className="mt-2 space-y-1 text-xs text-slate-600">{question.options.map((option) => <div key={option}>{question.type === "radio" ? "○" : "□"} {option}</div>)}</div>}
+                  {question.type === "shortText" && <div className="mt-3 border-b pb-1 text-xs text-slate-400">{question.placeholder || "回答を入力"}</div>}
+                  {question.type === "file" && <div className="mt-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-slate-500"><FaFileArrowUp />ファイルを追加</div>}
+                </div>
+              ))}
+            </div>
+          );
+        })}
       </div>
+      {/* previous-diff display removed per request */}
     </div>
   );
 }

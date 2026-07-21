@@ -144,6 +144,7 @@ export const templates = [
 export const actionItems = [
   { id: "a1", title: "研修参加申請フォーム", requester: "人材開発チーム", due: "2026/07/12", status: "未回答", visibility: "organization", templateId: "training", headerImageUrl: sampleHeaderImageUrl, confirmationType: "custom", thankYouTitle: "申請を受け付けました", thankYouMessage: "研修事務局で内容を確認し、参加可否をメールでお知らせします。" },
   { id: "a2", title: "満足度アンケート", requester: "イベント事務局", due: "2026/07/15", status: "未回答", visibility: "limited", templateId: "survey" },
+  { id: "a9", title: "エラー確認用アンケート", requester: "フォーム品質管理チーム", due: "2026/07/30", status: "未回答", visibility: "organization", templateId: "survey", simulateSystemError: true },
   { id: "a7", title: "Q2 研修申込（第2回）", requester: "人材開発チーム", due: "2026/07/01", status: "期限切れ", visibility: "organization", templateId: "training" },
   { id: "a6", title: "デモ回答用アンケート", requester: "フォーム体験チーム", due: "2026/07/22", status: "未回答", visibility: "organization", templateId: "survey" },
   { id: "a8", title: "デモ確認用アンケート", requester: "教育企画チーム", due: "2026/07/09", status: "回答済み", visibility: "organization", templateId: "survey", reviewSubmittedAt: "2026/07/09 16:40", reviewAnswers: { 全体の満足度: "満足", よかった点: "内容, 資料", 改善してほしい点: "質疑応答の時間を増やしてほしい", 資料の分かりやすさ: "分かりやすい", 今後の参加意向: "参加したい" } },
@@ -156,6 +157,7 @@ export const createdForms = [
   { id: "c1", title: "研修参加申請フォーム", status: "公開中", updatedAt: "2026/07/08 18:20", responses: 12, visibility: "organization", deadline: "2026-07-31T17:00", templateId: "training", headerImageUrl: sampleHeaderImageUrl, confirmationType: "custom", thankYouTitle: "申請を受け付けました", thankYouMessage: "研修事務局で内容を確認し、参加可否をメールでお知らせします。" },
   { id: "c2", title: "満足度アンケート", status: "下書き", updatedAt: "2026/07/07 15:10", responses: 0, visibility: "limited", deadline: "", templateId: "survey" },
   { id: "c3", title: "備品購入依頼フォーム", status: "終了", updatedAt: "2026/07/05 09:45", responses: 3, visibility: "private", deadline: "2026-07-20T23:59", templateId: "purchase", acceptingResponses: false },
+  { id: "c4", title: "集計確認用アンケート（10件回答）", status: "公開中", updatedAt: "2026/07/11 13:40", responses: 10, visibility: "organization", deadline: "2026-07-31T23:59", templateId: "survey" },
 ];
 
 export const versionHistory = {
@@ -186,6 +188,18 @@ export const responseSamples = {
     { id: "r-2002", respondent: "森 健太", submittedAt: "2026/07/05 12:18", status: "承認済み", answers: { 申請者名: "森 健太", 購入希望品名: "Webカメラ", 購入理由: "故障交換", 概算金額: "8,500円", 希望納期: "今週中" } },
     { id: "r-2003", respondent: "阿部 真央", submittedAt: "2026/07/05 16:44", status: "却下", answers: { 申請者名: "阿部 真央", 購入希望品名: "タブレット", 購入理由: "新規購入", 概算金額: "89,000円", 希望納期: "来月中" } },
   ],
+  c4: [
+    { id: "r-4001", respondent: "山田 花子", submittedAt: "2026/07/11 09:01", status: "確認済み", answers: { 全体の満足度: "満足", よかった点: "内容, 資料", 改善してほしい点: "特になし", 資料の分かりやすさ: "とても分かりやすい", 今後の参加意向: "参加したい" } },
+    { id: "r-4002", respondent: "佐藤 健", submittedAt: "2026/07/11 09:08", status: "確認済み", answers: { 全体の満足度: "やや満足", よかった点: "進行, 質疑応答", 改善してほしい点: "事例をもう少し増やしてほしい", 資料の分かりやすさ: "分かりやすい", 今後の参加意向: "参加したい" } },
+    { id: "r-4003", respondent: "田中 一郎", submittedAt: "2026/07/11 09:20", status: "確認待ち", answers: { 全体の満足度: "満足", よかった点: "内容", 改善してほしい点: "後半の時間がやや短かった", 資料の分かりやすさ: "分かりやすい", 今後の参加意向: "内容による" } },
+    { id: "r-4004", respondent: "鈴木 美咲", submittedAt: "2026/07/11 09:33", status: "確認済み", answers: { 全体の満足度: "普通", よかった点: "資料", 改善してほしい点: "もう少しハンズオンが欲しい", 資料の分かりやすさ: "普通", 今後の参加意向: "内容による" } },
+    { id: "r-4005", respondent: "高橋 直樹", submittedAt: "2026/07/11 09:45", status: "確認待ち", answers: { 全体の満足度: "満足", よかった点: "内容, 進行", 改善してほしい点: "録画共有があると助かる", 資料の分かりやすさ: "分かりやすい", 今後の参加意向: "参加したい" } },
+    { id: "r-4006", respondent: "中村 葵", submittedAt: "2026/07/11 10:02", status: "確認済み", answers: { 全体の満足度: "やや満足", よかった点: "質疑応答", 改善してほしい点: "開始時にゴールを明確にしてほしい", 資料の分かりやすさ: "分かりやすい", 今後の参加意向: "参加したい" } },
+    { id: "r-4007", respondent: "小林 悠", submittedAt: "2026/07/11 10:14", status: "確認済み", answers: { 全体の満足度: "満足", よかった点: "内容, 会場", 改善してほしい点: "配布資料を事前共有してほしい", 資料の分かりやすさ: "とても分かりやすい", 今後の参加意向: "参加したい" } },
+    { id: "r-4008", respondent: "加藤 翔", submittedAt: "2026/07/11 10:27", status: "確認待ち", answers: { 全体の満足度: "やや満足", よかった点: "進行", 改善してほしい点: "オンライン参加枠を増やしてほしい", 資料の分かりやすさ: "普通", 今後の参加意向: "内容による" } },
+    { id: "r-4009", respondent: "伊藤 玲奈", submittedAt: "2026/07/11 10:41", status: "確認済み", answers: { 全体の満足度: "普通", よかった点: "内容", 改善してほしい点: "質問時間を長めにしてほしい", 資料の分かりやすさ: "普通", 今後の参加意向: "内容による" } },
+    { id: "r-4010", respondent: "森 健太", submittedAt: "2026/07/11 10:56", status: "確認済み", answers: { 全体の満足度: "満足", よかった点: "内容, 資料, 質疑応答", 改善してほしい点: "アンケート回答期限をもう少し長くしてほしい", 資料の分かりやすさ: "分かりやすい", 今後の参加意向: "参加したい" } },
+  ],
 };
 
 export const collaboratorSamples = [
@@ -212,6 +226,20 @@ export const recipientSamples = {
     { name: "森 健太", email: "mori@example.com", department: "開発部", status: "回答済み", lastContact: "2026/07/05 10:00" },
     { name: "阿部 真央", email: "abe@example.com", department: "営業部", status: "回答済み", lastContact: "2026/07/05 10:00" },
   ],
+  c4: [
+    { name: "山田 花子", email: "yamada@example.com", department: "営業部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "佐藤 健", email: "sato@example.com", department: "開発部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "田中 一郎", email: "tanaka@example.com", department: "営業部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "鈴木 美咲", email: "suzuki@example.com", department: "開発部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "高橋 直樹", email: "takahashi@example.com", department: "人事部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "中村 葵", email: "nakamura@example.com", department: "総務部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "小林 悠", email: "kobayashi@example.com", department: "総務部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "加藤 翔", email: "kato@example.com", department: "人事部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "伊藤 玲奈", email: "ito@example.com", department: "経理部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "森 健太", email: "mori@example.com", department: "開発部", status: "回答済み", lastContact: "2026/07/11 08:50" },
+    { name: "阿部 真央", email: "abe@example.com", department: "営業部", status: "未回答", lastContact: "2026/07/11 09:30" },
+    { name: "橋本 結衣", email: "hashimoto@example.com", department: "人事部", status: "未回答", lastContact: "2026/07/11 09:30" },
+  ],
 };
 
 export const notificationRuleSamples = {
@@ -228,6 +256,10 @@ export const notificationRuleSamples = {
   c3: [
     { label: "回答依頼", timing: "公開直後", channel: "メール", enabled: true, subject: "備品購入依頼フォームへの回答依頼" },
     { label: "受付停止通知", timing: "受付停止時", channel: "メール", enabled: true, subject: "備品購入依頼フォームの受付を停止しました" },
+  ],
+  c4: [
+    { label: "回答依頼", timing: "公開直後", channel: "メール", enabled: true, subject: "集計確認用アンケートへの回答依頼" },
+    { label: "未回答者リマインド", timing: "期限3日前 09:00", channel: "メール", enabled: true, subject: "未回答のアンケートがあります" },
   ],
 };
 

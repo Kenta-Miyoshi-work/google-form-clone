@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { FaCalendarDays, FaGear, FaGlobe } from "react-icons/fa6";
+import { useEffect, useRef, useState } from "react";
+import { FaCalendarDays, FaChevronDown, FaChevronUp, FaGear, FaGlobe, FaWandMagicSparkles } from "react-icons/fa6";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import {
   visibilityOptions,
 } from "../../data/mockData";
 import {
+  appendAuditLog,
   formatDeadline,
   getAuditLogs,
   getNotificationRulesForItem,
@@ -23,6 +24,7 @@ import {
   getRecipientsForItem,
   getRespondentUrl,
   getResponsesForItem,
+  getStatusClassName,
   getVersionsForItem,
   getVisibilityLabel,
   createFormFromActionItem,
@@ -30,23 +32,64 @@ import {
   saveNotificationRules,
   toDeadlineInputValue,
 } from "../../utils/formBuilderUtils";
+import { summarizeTextAnswers } from "../../utils/aiGeneration";
 
-const targetOptions = [
-  { id: "scope-link", label: "リンクを知っている人", type: "公開" },
-  { id: "org-sales", label: "営業本部", type: "組織" },
-  { id: "org-dev", label: "開発本部", type: "組織" },
-  { id: "org-hr", label: "人事本部", type: "組織" },
-  { id: "user-yamada", label: "山田 花子", type: "人" },
-  { id: "user-sato", label: "佐藤 健", type: "人" },
-  { id: "user-suzuki", label: "鈴木 美咲", type: "人" },
+const departmentAudienceOptions = [
+  {
+    id: "org-sales",
+    label: "営業本部",
+    members: [
+      { id: "user-yamada", label: "山田 花子" },
+      { id: "user-sato", label: "佐藤 健" },
+    ],
+  },
+  {
+    id: "org-dev",
+    label: "開発本部",
+    members: [
+      { id: "user-suzuki", label: "鈴木 美咲" },
+      { id: "user-tanaka", label: "田中 一郎" },
+    ],
+  },
+  {
+    id: "org-hr",
+    label: "人事本部",
+    members: [
+      { id: "user-kobayashi", label: "小林 真由" },
+      { id: "user-kato", label: "加藤 翔" },
+    ],
+  },
 ];
 
-const audienceTargetOptions = targetOptions;
+const allAudienceMembers = departmentAudienceOptions.flatMap((department) => department.members);
+const audienceMemberIdSet = new Set(allAudienceMembers.map((member) => member.id));
+
+function getDepartmentMemberIds(departmentId) {
+  return departmentAudienceOptions.find((department) => department.id === departmentId)?.members.map((member) => member.id) ?? [];
+}
+
+function normalizeAudienceTargets(selectedIds = []) {
+  const selectedSet = new Set();
+  selectedIds.forEach((targetId) => {
+    if (audienceMemberIdSet.has(targetId)) {
+      selectedSet.add(targetId);
+      return;
+    }
+    getDepartmentMemberIds(targetId).forEach((memberId) => selectedSet.add(memberId));
+  });
+  return Array.from(selectedSet);
+}
 
 function getAudienceLabel(selectedIds = []) {
-  const labels = audienceTargetOptions
-    .filter((option) => selectedIds.includes(option.id))
-    .map((option) => option.label);
+  const selectedSet = new Set(normalizeAudienceTargets(selectedIds));
+  const labels = departmentAudienceOptions
+    .map((department) => {
+      const total = department.members.length;
+      const selectedCount = department.members.filter((member) => selectedSet.has(member.id)).length;
+      if (selectedCount === 0) return null;
+      return selectedCount === total ? department.label : `${department.label} (${selectedCount}/${total})`;
+    })
+    .filter(Boolean);
   return labels.length > 0 ? labels.join(" / ") : "公開先を選択";
 }
 
@@ -155,7 +198,6 @@ export function ShareLinkDialog({ item, onOpenChange }) {
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => navigator.clipboard?.writeText(shareUrl)}>コピー</Button>
-          <a className="inline-flex h-9 items-center justify-center rounded-md bg-purple-600 px-3 text-sm font-medium text-white transition hover:bg-purple-700" href={shareUrl} target="_blank" rel="noreferrer">回答画面の表示</a>
           <Button variant="outline" onClick={() => onOpenChange(false)}>閉じる</Button>
         </DialogFooter>
       </DialogContent>
@@ -212,34 +254,28 @@ export function ResponseDashboardPage({ item, onBack }) {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">未回答者一覧</CardTitle>
-            <p className="text-sm text-slate-500">未回答・リマインド済み・未送信の対象者を表示します。</p>
+            <p className="text-sm text-slate-500">未回答の対象者を表示します。</p>
           </CardHeader>
           <CardContent>
             {unansweredRecipients.length === 0 ? (
               <div className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">未回答者はいません。</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-left text-sm">
-                  <thead className="border-b text-xs text-slate-500">
-                    <tr>
-                      <th className="px-3 py-2">氏名/グループ</th>
-                      <th className="px-3 py-2">メール</th>
-                      <th className="px-3 py-2">部署</th>
-                      <th className="px-3 py-2">状態</th>
+              <table className="w-full table-fixed text-left text-sm">
+                <thead className="border-b text-xs text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">氏名</th>
+                    <th className="px-3 py-2">部署</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unansweredRecipients.map((recipient) => (
+                    <tr key={`${recipient.email}-${recipient.name}`} className="border-b">
+                      <td className="px-3 py-3 font-medium text-slate-800 break-words">{recipient.name}</td>
+                      <td className="px-3 py-3 text-slate-600 break-words">{recipient.department}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {unansweredRecipients.map((recipient) => (
-                      <tr key={`${recipient.email}-${recipient.name}`} className="border-b">
-                        <td className="px-3 py-3 font-medium text-slate-800">{recipient.name}</td>
-                        <td className="px-3 py-3 text-slate-600">{recipient.email}</td>
-                        <td className="px-3 py-3 text-slate-600">{recipient.department}</td>
-                        <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs ${getStatusClassName(recipient.status)}`}>{recipient.status}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             )}
           </CardContent>
         </Card>
@@ -284,6 +320,7 @@ export function MetricCard({ label, value }) {
 }
 
 const choiceQuestionTypes = new Set(["radio", "checkbox", "select", "rating", "consent"]);
+const textQuestionTypes = new Set(["shortText", "paragraph", "email"]);
 const pieColors = ["#7c3aed", "#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#6366f1", "#14b8a6", "#ec4899"];
 
 function getQuestionAnswers(responses, questionTitle) {
@@ -387,19 +424,21 @@ function PieChartSummary({ segments, chartTitle }) {
   const total = segments.reduce((sum, segment) => sum + segment.count, 0);
   if (total <= 0) return <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">集計できる回答がありません。</div>;
 
-  let accumulator = 0;
-  const gradient = segments.map((segment, index) => {
-    const start = (accumulator / total) * 100;
-    accumulator += segment.count;
-    const end = (accumulator / total) * 100;
-    return `${pieColors[index % pieColors.length]} ${start}% ${end}%`;
-  }).join(", ");
+  const gradient = segments.reduce((current, segment, index) => {
+    const start = (current.accumulator / total) * 100;
+    const nextAccumulator = current.accumulator + segment.count;
+    const end = (nextAccumulator / total) * 100;
+    const colorRange = `${pieColors[index % pieColors.length]} ${start}% ${end}%`;
+    return {
+      accumulator: nextAccumulator,
+      gradient: current.gradient ? `${current.gradient}, ${colorRange}` : colorRange,
+    };
+  }, { accumulator: 0, gradient: "" }).gradient;
 
   return (
     <button
       type="button"
       className="w-full rounded-lg p-1 text-left transition hover:bg-slate-50"
-      title="円グラフ画像をコピー"
       onClick={() => { void copyPieChartImageToClipboard(segments, chartTitle); }}
     >
       <div className="grid gap-4 md:grid-cols-[130px_minmax(0,1fr)] md:items-center">
@@ -424,15 +463,55 @@ function PieChartSummary({ segments, chartTitle }) {
 }
 
 function QuestionSummaryCard({ question, responses }) {
+  const [aiSummary, setAiSummary] = useState("");
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
+
   const answers = getQuestionAnswers(responses, question.title);
   const isChoiceQuestion = choiceQuestionTypes.has(question.type);
+  const isTextQuestion = textQuestionTypes.has(question.type);
   const choiceSegments = isChoiceQuestion ? getChoiceCounts(question.type, answers) : [];
+  const shouldScrollTextAnswers = !isChoiceQuestion && answers.length >= 5;
+  const summaryTargetAnswers = answers
+    .map((answer) => String(answer.value || "").trim())
+    .filter((value) => value && value !== "-");
+
+  const runAiSummary = async () => {
+    if (!isTextQuestion || isSummarizing) return;
+
+    setIsSummarizing(true);
+    setSummaryError("");
+
+    try {
+      const result = await summarizeTextAnswers({
+        questionTitle: question.title || "設問",
+        answers: summaryTargetAnswers,
+      });
+      setAiSummary(result.summary || "");
+    } catch (error) {
+      setSummaryError(error instanceof Error ? error.message : "AI要約に失敗しました。");
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{question.title}</CardTitle>
-        <p className="text-xs text-slate-500">{isChoiceQuestion ? "選択式質問" : "文章入力質問"}</p>
+        <div className="flex items-start justify-between gap-3">
+          <CardTitle className="text-base">{question.title}</CardTitle>
+          {isTextQuestion && (
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-2 rounded-md border border-purple-200 bg-purple-50 px-3 py-1.5 text-sm font-medium text-purple-700 transition hover:bg-purple-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              onClick={() => { void runAiSummary(); }}
+              disabled={isSummarizing}
+            >
+              <FaWandMagicSparkles className="text-[13px]" aria-hidden="true" />
+              <span>{isSummarizing ? "要約中..." : "AIで要約"}</span>
+            </button>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {responses.length === 0 ? (
@@ -440,13 +519,21 @@ function QuestionSummaryCard({ question, responses }) {
         ) : isChoiceQuestion ? (
           <PieChartSummary segments={choiceSegments} chartTitle={`${question.title} 集計`} />
         ) : (
-          <div className="space-y-2">
-            {answers.map((answer, index) => (
-              <div key={`${answer.respondent}-${index}`} className="rounded-lg bg-slate-50 p-3 text-sm">
-                <div className="font-medium text-slate-800">{answer.respondent}</div>
-                <div className="mt-1 text-slate-600">{answer.value || "-"}</div>
+          <div className="space-y-3">
+            {(aiSummary || summaryError) && (
+              <div className={`rounded-lg border p-3 text-sm ${summaryError ? "border-rose-200 bg-rose-50 text-rose-700" : "border-purple-200 bg-purple-50 text-slate-700"}`}>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">AI要約</div>
+                <div>{summaryError || aiSummary}</div>
               </div>
-            ))}
+            )}
+            <div className={`space-y-2 ${shouldScrollTextAnswers ? "max-h-80 overflow-y-auto pr-1" : ""}`}>
+              {answers.map((answer, index) => (
+                <div key={`${answer.respondent}-${index}`} className="rounded-lg bg-slate-50 p-3 text-sm">
+                  <div className="font-medium text-slate-800">{answer.respondent}</div>
+                  <div className="mt-1 text-slate-600">{answer.value || "-"}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </CardContent>
@@ -457,8 +544,14 @@ function QuestionSummaryCard({ question, responses }) {
 export function ResponseInsightsTabs({ responses, questions }) {
   const [activeTab, setActiveTab] = useState("summary");
   const [selectedResponseId, setSelectedResponseId] = useState(responses[0]?.id ?? "");
+  const [respondentQuery, setRespondentQuery] = useState("");
 
-  const selectedResponse = responses.find((response) => response.id === selectedResponseId) ?? responses[0];
+  const normalizedRespondentQuery = respondentQuery.trim().toLowerCase();
+  const filteredResponses = normalizedRespondentQuery
+    ? responses.filter((response) => getRespondentDisplayName(response).toLowerCase().includes(normalizedRespondentQuery))
+    : responses;
+
+  const selectedResponse = filteredResponses.find((response) => response.id === selectedResponseId) ?? filteredResponses[0];
 
   return (
     <section className="space-y-4">
@@ -471,7 +564,13 @@ export function ResponseInsightsTabs({ responses, questions }) {
         <div className="space-y-4">
           {questions.length === 0 ? (
             <Card><CardContent className="p-6 text-center text-sm text-slate-500">質問データがありません。</CardContent></Card>
-          ) : questions.map((question) => <QuestionSummaryCard key={question.title} question={question} responses={responses} />)}
+          ) : questions.map((question, index) => (
+            <QuestionSummaryCard
+              key={question.id || `${question.title || "question"}-${index}`}
+              question={question}
+              responses={responses}
+            />
+          ))}
         </div>
       )}
 
@@ -485,13 +584,24 @@ export function ResponseInsightsTabs({ responses, questions }) {
               {responses.length === 0 ? (
                 <div className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">まだ回答はありません。</div>
               ) : (
-                <div className="space-y-2">
-                  {responses.map((response) => (
-                    <button key={response.id} type="button" className={`w-full rounded-lg border px-3 py-3 text-left text-sm transition ${selectedResponse?.id === response.id ? "border-purple-300 bg-purple-50" : "border-slate-200 bg-white hover:bg-slate-50"}`} onClick={() => setSelectedResponseId(response.id)}>
-                      <div className="font-medium text-slate-900">{getRespondentDisplayName(response)}</div>
-                      <div className="mt-1 text-xs text-slate-500">{response.submittedAt}</div>
-                    </button>
-                  ))}
+                <div className="space-y-3">
+                  <Input
+                    value={respondentQuery}
+                    onChange={(event) => setRespondentQuery(event.target.value)}
+                    placeholder="氏名で検索"
+                  />
+                  {filteredResponses.length === 0 ? (
+                    <div className="rounded-lg bg-slate-50 p-4 text-center text-sm text-slate-500">該当する回答者がいません。</div>
+                  ) : (
+                    <div className="max-h-[52vh] space-y-2 overflow-y-auto pr-1">
+                      {filteredResponses.map((response) => (
+                        <button key={response.id} type="button" className={`w-full rounded-lg border px-3 py-3 text-left text-sm transition ${selectedResponse?.id === response.id ? "border-purple-300 bg-purple-50" : "border-slate-200 bg-white hover:bg-slate-50"}`} onClick={() => setSelectedResponseId(response.id)}>
+                          <div className="font-medium text-slate-900">{getRespondentDisplayName(response)}</div>
+                          <div className="mt-1 text-xs text-slate-500">{response.submittedAt}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -504,7 +614,7 @@ export function ResponseInsightsTabs({ responses, questions }) {
             </CardHeader>
             <CardContent>
               {selectedResponse ? (
-                <div className="space-y-3">
+                <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
                   {Object.entries(selectedResponse.answers).map(([key, value]) => (
                     <div key={key} className="border-b pb-3">
                       <div className="text-xs font-medium text-slate-500">{key}</div>
@@ -564,7 +674,7 @@ export function RecipientManagementPage({ item, onBack, onOpenNotifications }) {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead className="border-b text-xs text-slate-500">
-                  <tr><th className="px-3 py-2">氏名/グループ</th><th className="px-3 py-2">メール</th><th className="px-3 py-2">部署</th><th className="px-3 py-2">状態</th><th className="px-3 py-2">最終連絡</th></tr>
+                  <tr><th className="px-3 py-2">氏名</th><th className="px-3 py-2">メールアドレス</th><th className="px-3 py-2">部署</th><th className="px-3 py-2">状態</th><th className="px-3 py-2">最終連絡</th></tr>
                 </thead>
                 <tbody>
                   {filteredRecipients.map((recipient) => (
@@ -940,11 +1050,12 @@ export function VersionCompareColumn({ title, version }) {
   );
 }
 
-export function PublishControlDialog({ item, onOpenChange, onSaveSettings, onPublish }) {
+export function PublishControlDialog({ item, onOpenChange, onSaveSettings, onPublish, onReturnTop }) {
   const itemSettings = item ? createDefaultSettings(createFormFromActionItem(item).settings) : createDefaultSettings();
-  const initialAudienceTargets = Array.isArray(itemSettings.audienceTargets) && itemSettings.audienceTargets.length > 0
-    ? itemSettings.audienceTargets
-    : audienceTargetOptions.slice(0, 3).map((option) => option.id);
+  const initialAudienceTargets = Array.isArray(itemSettings.audienceTargets)
+    ? normalizeAudienceTargets(itemSettings.audienceTargets)
+    : [];
+  const audienceDropdownRef = useRef(null);
   const [publishedItem, setPublishedItem] = useState(null);
   const [audienceSearch, setAudienceSearch] = useState("");
   const [audienceDropdownOpen, setAudienceDropdownOpen] = useState(false);
@@ -956,16 +1067,72 @@ export function PublishControlDialog({ item, onOpenChange, onSaveSettings, onPub
     limitOneResponse: itemSettings.limitOneResponse,
     allowEditAfterSubmit: itemSettings.allowEditAfterSubmit,
   }));
-  const filteredAudienceOptions = audienceTargetOptions.filter((option) => option.id === "scope-link" || option.label.toLowerCase().includes(audienceSearch.toLowerCase()));
-  const toggleAudienceTarget = (targetId) => {
+  const [expandedDepartmentIds, setExpandedDepartmentIds] = useState(() => (
+    departmentAudienceOptions
+      .filter((department) => department.members.some((member) => initialAudienceTargets.includes(member.id)))
+      .map((department) => department.id)
+  ));
+
+  useEffect(() => {
+    if (!audienceDropdownOpen) return undefined;
+
+    const closeAudienceDropdownOnOutsideClick = (event) => {
+      if (!audienceDropdownRef.current?.contains(event.target)) {
+        setAudienceDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeAudienceDropdownOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeAudienceDropdownOnOutsideClick);
+  }, [audienceDropdownOpen]);
+
+  const filteredDepartments = departmentAudienceOptions.filter((department) => {
+    if (!audienceSearch.trim()) return true;
+    const keyword = audienceSearch.toLowerCase();
+    return department.label.toLowerCase().includes(keyword) || department.members.some((member) => member.label.toLowerCase().includes(keyword));
+  });
+
+  const toggleDepartmentExpanded = (departmentId) => {
+    setExpandedDepartmentIds((current) => current.includes(departmentId)
+      ? current.filter((id) => id !== departmentId)
+      : [...current, departmentId]);
+  };
+
+  const toggleDepartment = (departmentId) => {
+    const memberIds = getDepartmentMemberIds(departmentId);
     setSettingsDraft((current) => {
-      const exists = current.audienceTargets.includes(targetId);
-      const nextTargets = exists
-        ? current.audienceTargets.filter((id) => id !== targetId)
-        : [...current.audienceTargets, targetId];
-      return { ...current, audienceTargets: nextTargets.length > 0 ? nextTargets : current.audienceTargets };
+      const selectedSet = new Set(current.audienceTargets);
+      const allSelected = memberIds.every((memberId) => selectedSet.has(memberId));
+      if (allSelected) {
+        memberIds.forEach((memberId) => selectedSet.delete(memberId));
+      } else {
+        memberIds.forEach((memberId) => selectedSet.add(memberId));
+      }
+      return { ...current, audienceTargets: Array.from(selectedSet) };
     });
   };
+
+  const toggleAudienceMember = (memberId) => {
+    setSettingsDraft((current) => {
+      const selectedSet = new Set(current.audienceTargets);
+      if (selectedSet.has(memberId)) selectedSet.delete(memberId);
+      else selectedSet.add(memberId);
+      return { ...current, audienceTargets: Array.from(selectedSet) };
+    });
+  };
+
+  const toggleAllAudienceMembers = () => {
+    setSettingsDraft((current) => {
+      const allSelected = allAudienceMembers.every((member) => current.audienceTargets.includes(member.id));
+      return {
+        ...current,
+        audienceTargets: allSelected ? [] : allAudienceMembers.map((member) => member.id),
+      };
+    });
+  };
+
+  const allAudienceMembersSelected = allAudienceMembers.every((member) => settingsDraft.audienceTargets.includes(member.id));
+
   const publishedAudienceLabel = publishedItem
     ? getAudienceLabel(createDefaultSettings(createFormFromActionItem(publishedItem).settings).audienceTargets)
     : "";
@@ -977,7 +1144,7 @@ export function PublishControlDialog({ item, onOpenChange, onSaveSettings, onPub
 
   return (
     <Dialog open={Boolean(item)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100vh-2rem)] max-w-7xl overflow-y-auto" style={{ width: "98vw", maxWidth: "1280px" }}>
+      <DialogContent className="h-[53vh] max-h-[calc(100vh-0.25rem)] max-w-7xl overflow-y-auto" style={{ width: "98vw", maxWidth: "1280px" }} showCloseButton={!publishedItem}>
         <DialogHeader>
           <DialogTitle>{publishedItem ? "公開しました" : "公開設定・権限"}</DialogTitle>
           <DialogDescription>{publishedItem ? "回答者に渡すリンクと公開情報を確認できます。" : "公開前に共有設定を確認できます。"}</DialogDescription>
@@ -994,62 +1161,94 @@ export function PublishControlDialog({ item, onOpenChange, onSaveSettings, onPub
             </div>
           </div>
         ) : item && (
-          <div className="space-y-5">
-            <div className="grid gap-4">
-              <div className="space-y-4">
-                <div className="rounded-lg border bg-white p-4">
+          <div className="space-y-8">
+            <div className="grid gap-6">
+              <div className="space-y-6">
+                <div className="rounded-lg border bg-white p-6">
                   <div className="font-medium text-slate-900">共有設定入力</div>
-                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                    <div className="space-y-2 sm:col-span-2">
+                  <div className="mt-6 grid gap-6 text-sm sm:grid-cols-2">
+                    <div className="space-y-3 sm:col-span-2">
                       <label className="text-xs text-slate-500">公開範囲</label>
-                      <div className="relative">
+                      <div ref={audienceDropdownRef} className="relative">
                         <button
                           type="button"
-                          className="flex h-10 w-full items-center justify-between rounded-md border bg-white px-3 text-left text-sm"
+                          className="flex h-11 w-full items-center justify-between rounded-md border bg-white px-4 text-left text-sm"
                           onClick={() => setAudienceDropdownOpen((open) => !open)}
                         >
                           <span className="truncate">{getAudienceLabel(settingsDraft.audienceTargets)}</span>
                           <span className="text-slate-400">▼</span>
                         </button>
                         {audienceDropdownOpen && (
-                          <div className="absolute z-50 mt-2 w-full rounded-md border bg-white p-3 shadow-lg">
+                          <div className="absolute z-50 mt-3 w-full rounded-md border bg-white p-4 shadow-lg">
                             <Input value={audienceSearch} onChange={(event) => setAudienceSearch(event.target.value)} placeholder="組織名・氏名で検索" />
-                            <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">
-                              {filteredAudienceOptions.map((option) => (
-                                <label key={option.id} className="flex items-center justify-between rounded-md px-2 py-2 text-sm hover:bg-slate-50">
-                                  <span className="flex items-center gap-2">
-                                    <input
-                                      type="checkbox"
-                                      checked={settingsDraft.audienceTargets.includes(option.id)}
-                                      onChange={() => toggleAudienceTarget(option.id)}
-                                    />
-                                    <span>{option.label}</span>
-                                  </span>
-                                  <span className="text-xs text-slate-400">{option.type}</span>
-                                </label>
-                              ))}
-                              {filteredAudienceOptions.length === 0 && <p className="px-2 py-3 text-xs text-slate-500">候補が見つかりません。</p>}
+                            <div className="mt-3 flex justify-end">
+                              <Button type="button" variant="outline" size="sm" onClick={toggleAllAudienceMembers}>
+                                {allAudienceMembersSelected ? "全体選択を解除" : "全体選択"}
+                              </Button>
+                            </div>
+                            <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
+                              {filteredDepartments.map((department) => {
+                                const memberIds = department.members.map((member) => member.id);
+                                const selectedCount = memberIds.filter((memberId) => settingsDraft.audienceTargets.includes(memberId)).length;
+                                const isChecked = selectedCount === memberIds.length;
+                                const isExpanded = expandedDepartmentIds.includes(department.id);
+                                const showMembers = isExpanded || Boolean(audienceSearch.trim());
+
+                                return (
+                                  <div key={department.id} className="rounded-md border border-slate-200 bg-white">
+                                    <div className="flex items-center rounded-md hover:bg-slate-50">
+                                      <label className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-sm font-medium">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => toggleDepartment(department.id)}
+                                        />
+                                        <span>{department.label}</span>
+                                      </label>
+                                      <span className="text-xs text-slate-500">
+                                        {selectedCount > 0 ? `${selectedCount}/${memberIds.length} 選択` : `${memberIds.length}名`}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        aria-label={`${department.label}のメンバーを${showMembers ? "閉じる" : "開く"}`}
+                                        aria-expanded={showMembers}
+                                        className="mx-1 inline-flex size-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
+                                        onClick={() => toggleDepartmentExpanded(department.id)}
+                                      >
+                                        {showMembers ? <FaChevronUp /> : <FaChevronDown />}
+                                      </button>
+                                    </div>
+                                    {showMembers && (
+                                      <div className="border-t bg-slate-50 px-2 py-2">
+                                        <div className="space-y-1">
+                                          {department.members.map((member) => (
+                                            <label key={member.id} className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-white">
+                                              <span className="ml-6 flex items-center gap-2">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={settingsDraft.audienceTargets.includes(member.id)}
+                                                  onChange={() => toggleAudienceMember(member.id)}
+                                                />
+                                                <span>{member.label}</span>
+                                              </span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {filteredDepartments.length === 0 && <p className="px-2 py-3 text-xs text-slate-500">候補が見つかりません。</p>}
                             </div>
                           </div>
                         )}
                       </div>
                     </div>
-                    <div className="space-y-2 sm:col-span-2">
+                    <div className="space-y-3 sm:col-span-2">
                       <label className="text-xs text-slate-500">回答期限</label>
-                      <Input type="datetime-local" value={settingsDraft.deadline} onChange={(event) => setSettingsDraft((current) => ({ ...current, deadline: event.target.value }))} />
+                      <Input className="h-11 px-4" type="datetime-local" value={settingsDraft.deadline} onChange={(event) => setSettingsDraft((current) => ({ ...current, deadline: event.target.value }))} />
                     </div>
-                    <label className="flex items-center gap-2 rounded-md bg-slate-50 p-3 text-xs text-slate-700">
-                      <input type="checkbox" checked={settingsDraft.acceptingResponses} onChange={(event) => setSettingsDraft((current) => ({ ...current, acceptingResponses: event.target.checked }))} />
-                      回答を受け付ける
-                    </label>
-                    <label className="flex items-center gap-2 rounded-md bg-slate-50 p-3 text-xs text-slate-700">
-                      <input type="checkbox" checked={settingsDraft.limitOneResponse} onChange={(event) => setSettingsDraft((current) => ({ ...current, limitOneResponse: event.target.checked }))} />
-                      1人1回回答
-                    </label>
-                    <label className="flex items-center gap-2 rounded-md bg-slate-50 p-3 text-xs text-slate-700 sm:col-span-2">
-                      <input type="checkbox" checked={settingsDraft.allowEditAfterSubmit} onChange={(event) => setSettingsDraft((current) => ({ ...current, allowEditAfterSubmit: event.target.checked }))} />
-                      回答後の編集を許可
-                    </label>
                   </div>
                 </div>
               </div>
@@ -1057,11 +1256,11 @@ export function PublishControlDialog({ item, onOpenChange, onSaveSettings, onPub
           </div>
         )}
         <DialogFooter>
-          {publishedItem && <Button variant="outline" onClick={() => navigator.clipboard?.writeText(publishedShareUrl)}>コピー</Button>}
-          {publishedItem && <a className="inline-flex h-9 items-center justify-center rounded-md bg-purple-600 px-3 text-sm font-medium text-white transition hover:bg-purple-700" href={publishedShareUrl} target="_blank" rel="noreferrer">回答画面の表示</a>}
-          {!publishedItem && item && <Button className="bg-purple-600 hover:bg-purple-700" onClick={publishItem}>公開を実行</Button>}
-          {!publishedItem && item && <Button variant="outline" onClick={() => { onSaveSettings?.(item, settingsDraft); onOpenChange(false); }}>下書きを維持</Button>}
-          <Button variant="outline" onClick={() => onOpenChange(false)}>閉じる</Button>
+          {publishedItem && <Button className="bg-purple-600 text-white hover:bg-purple-700" onClick={() => navigator.clipboard?.writeText(publishedShareUrl)}>リンクをコピー</Button>}
+          {!publishedItem && item && <Button className="bg-purple-600 hover:bg-purple-700" onClick={publishItem}>公開</Button>}
+          {publishedItem
+            ? <Button variant="outline" onClick={() => onReturnTop?.()}>トップに戻る</Button>
+            : <Button variant="outline" onClick={() => onOpenChange(false)}>閉じる</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

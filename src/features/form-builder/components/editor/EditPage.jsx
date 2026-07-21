@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { DndContext, closestCenter } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { FaArrowDown, FaArrowUp, FaCopy, FaGripVertical, FaPlus, FaTrash } from "react-icons/fa6";
+import { FaArrowDown, FaArrowUp, FaChevronDown, FaCopy, FaGripVertical, FaPlus, FaTrash } from "react-icons/fa6";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,38 +11,81 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { questionTypes } from "../../data/mockData";
-import { normalizeQuestion, questionHasOptions } from "../../utils/formBuilderUtils";
+import { DEFAULT_FORM_DESCRIPTION, DEFAULT_FORM_TITLE, DEFAULT_QUESTION_TITLE, normalizeQuestion, questionHasOptions } from "../../utils/formBuilderUtils";
 
-const collaboratorOptions = [
-  { id: "user-yamada", label: "山田 花子", type: "メンバー" },
-  { id: "user-sato", label: "佐藤 健", type: "メンバー" },
-  { id: "user-suzuki", label: "鈴木 美咲", type: "メンバー" },
-  { id: "org-sales", label: "営業本部", type: "組織" },
-  { id: "org-dev", label: "開発本部", type: "組織" },
-  { id: "org-hr", label: "人事本部", type: "組織" },
+const selectableQuestionTypes = questionTypes.filter((type) => type.value !== "file");
+
+const collaboratorDepartments = [
+  {
+    id: "org-sales",
+    label: "営業本部",
+    members: [
+      { id: "user-yamada", label: "山田 花子" },
+      { id: "user-sato", label: "佐藤 健" },
+    ],
+  },
+  {
+    id: "org-dev",
+    label: "開発本部",
+    members: [
+      { id: "user-suzuki", label: "鈴木 美咲" },
+      { id: "user-tanaka", label: "田中 一郎" },
+    ],
+  },
+  {
+    id: "org-hr",
+    label: "人事本部",
+    members: [
+      { id: "user-kobayashi", label: "小林 真由" },
+      { id: "user-kato", label: "加藤 翔" },
+    ],
+  },
 ];
+
+const allCollaboratorMembers = collaboratorDepartments.flatMap((department) => (
+  department.members.map((member) => ({ ...member, departmentId: department.id, departmentLabel: department.label }))
+));
+const collaboratorMemberIdSet = new Set(allCollaboratorMembers.map((member) => member.id));
+
+function getCollaboratorMemberIds(departmentId) {
+  return collaboratorDepartments.find((department) => department.id === departmentId)?.members.map((member) => member.id) ?? [];
+}
+
+function normalizeCollaboratorIds(value) {
+  const source = Array.isArray(value) ? value : [];
+  const selectedSet = new Set();
+  source.forEach((targetId) => {
+    if (collaboratorMemberIdSet.has(targetId)) {
+      selectedSet.add(targetId);
+      return;
+    }
+    getCollaboratorMemberIds(targetId).forEach((memberId) => selectedSet.add(memberId));
+  });
+  return Array.from(selectedSet);
+}
 
 export function SortableQuestion(props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.question.id });
   return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={isDragging ? "relative z-10 opacity-80" : ""}><QuestionCard {...props} attributes={attributes} listeners={listeners} isDragging={isDragging} /></div>;
 }
 
-export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEnd, updateQuestion, addQuestion, deleteQuestion, duplicateQuestion, moveQuestion, changeType, updateOption, addOption, deleteOption }) {
-  const [activeTab, setActiveTab] = useState("builder");
+export function EditPage({ form, setForm, activeTab, publishValidation = { formTitleError: "", questionTitleErrors: {} }, sensors, onDragEnd, updateQuestion, addQuestion, duplicateQuestion, deleteQuestion, moveQuestion, changeType, updateOption, addOption, deleteOption }) {
   const [collaboratorSearch, setCollaboratorSearch] = useState("");
-  const noticeIsWarning = saveNotice?.startsWith("公開前チェック未完了") || saveNotice?.includes("権限") || saveNotice?.includes("ありません");
+  const [expandedDepartmentIds, setExpandedDepartmentIds] = useState([]);
   const creatorName = form.settings?.creatorName || "〇〇さん";
   const selectedCollaboratorIds = useMemo(() => {
-    const value = form.settings?.collaboratorIds;
-    return Array.isArray(value) ? value : collaboratorOptions.slice(0, 2).map((option) => option.id);
+    return normalizeCollaboratorIds(form.settings?.collaboratorIds);
   }, [form.settings?.collaboratorIds]);
-  const filteredCollaboratorOptions = collaboratorOptions.filter((option) => option.label.toLowerCase().includes(collaboratorSearch.toLowerCase()));
-  const selectedCollaborators = collaboratorOptions.filter((option) => selectedCollaboratorIds.includes(option.id));
 
-  const toggleCollaborator = (targetId) => {
-    const nextIds = selectedCollaboratorIds.includes(targetId)
-      ? selectedCollaboratorIds.filter((id) => id !== targetId)
-      : [...selectedCollaboratorIds, targetId];
+  const filteredCollaboratorDepartments = collaboratorDepartments.filter((department) => {
+    if (!collaboratorSearch.trim()) return true;
+    const keyword = collaboratorSearch.toLowerCase();
+    return department.label.toLowerCase().includes(keyword) || department.members.some((member) => member.label.toLowerCase().includes(keyword));
+  });
+
+  const selectedCollaborators = allCollaboratorMembers.filter((member) => selectedCollaboratorIds.includes(member.id));
+
+  const saveCollaboratorIds = (nextIds) => {
     setForm({
       ...form,
       settings: {
@@ -52,24 +95,58 @@ export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEn
     });
   };
 
-  return (
-    <main className="mx-auto max-w-5xl space-y-4 p-4 md:p-8">
-      <div className="flex min-h-5 flex-wrap items-center justify-end gap-3 px-1 text-xs text-slate-500">
-        {noticeIsWarning ? <span className="text-amber-700">{saveNotice}</span> : <span>{isDirty ? "自動保存中です。" : "このフォームは自動保存されています。"}</span>}
-      </div>
-      <section className="space-y-4">
-        <div className="flex gap-2 border-b">
-          <button type="button" onClick={() => setActiveTab("builder")} className={`px-4 py-3 text-sm font-medium ${activeTab === "builder" ? "border-b-2 border-purple-600 text-purple-700" : "text-slate-500 hover:text-slate-900"}`}>フォーム作成</button>
-          <button type="button" onClick={() => setActiveTab("collaborator")} className={`px-4 py-3 text-sm font-medium ${activeTab === "collaborator" ? "border-b-2 border-purple-600 text-purple-700" : "text-slate-500 hover:text-slate-900"}`}>共同編集設定</button>
-        </div>
+  const toggleDepartmentCollaborators = (departmentId) => {
+    const memberIds = getCollaboratorMemberIds(departmentId);
+    const selectedSet = new Set(selectedCollaboratorIds);
+    const allSelected = memberIds.every((memberId) => selectedSet.has(memberId));
+    if (allSelected) {
+      memberIds.forEach((memberId) => selectedSet.delete(memberId));
+    } else {
+      memberIds.forEach((memberId) => selectedSet.add(memberId));
+    }
+    saveCollaboratorIds(Array.from(selectedSet));
+    setExpandedDepartmentIds((current) => {
+      const currentSet = new Set(current);
+      currentSet.add(departmentId);
+      return Array.from(currentSet);
+    });
+  };
 
+  const toggleCollaboratorMember = (memberId) => {
+    const selectedSet = new Set(selectedCollaboratorIds);
+    if (selectedSet.has(memberId)) selectedSet.delete(memberId);
+    else selectedSet.add(memberId);
+    saveCollaboratorIds(Array.from(selectedSet));
+  };
+
+  const toggleDepartmentExpanded = (departmentId) => {
+    setExpandedDepartmentIds((current) => current.includes(departmentId)
+      ? current.filter((id) => id !== departmentId)
+      : [...current, departmentId]);
+  };
+
+  return (
+    <main className="w-full space-y-4 p-2 md:p-4">
+      <section className="space-y-4">
         {activeTab === "builder" && (
           <>
             <Card className="border-t-8 border-t-purple-600">
               <CardHeader><CardTitle className="text-2xl">フォーム作成</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <Input className="text-xl font-semibold" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} />
-                <Textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+                <Input
+                  id="authoring-form-title"
+                  className="text-xl"
+                  value={form.title}
+                  placeholder={DEFAULT_FORM_TITLE}
+                  onChange={(event) => setForm({ ...form, title: event.target.value })}
+                />
+                {publishValidation.formTitleError && <p className="text-sm text-red-600">{publishValidation.formTitleError}</p>}
+                <Textarea
+                  className=""
+                  value={form.description}
+                  placeholder={DEFAULT_FORM_DESCRIPTION}
+                  onChange={(event) => setForm({ ...form, description: event.target.value })}
+                />
               </CardContent>
             </Card>
 
@@ -81,6 +158,7 @@ export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEn
                       key={question.id}
                       question={question}
                       index={index}
+                      questionDomId={`question-card-${question.id}`}
                       updateQuestion={updateQuestion}
                       deleteQuestion={deleteQuestion}
                       changeType={changeType}
@@ -90,13 +168,23 @@ export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEn
                       duplicateQuestion={duplicateQuestion}
                       moveQuestion={moveQuestion}
                       totalQuestions={form.questions.length}
+                      titleError={publishValidation.questionTitleErrors[question.id]}
                     />
                   ))}
+                  {form.questions.length === 0 && (
+                    <Card>
+                      <CardContent className="p-6 text-center text-sm text-slate-500">質問がまだありません。</CardContent>
+                    </Card>
+                  )}
                 </div>
               </SortableContext>
             </DndContext>
 
-            <div className="flex justify-center pb-12"><Button onClick={addQuestion} className="gap-2 bg-purple-600 hover:bg-purple-700"><FaPlus />質問を追加</Button></div>
+            <div className="flex flex-col items-center gap-3 pb-12">
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button onClick={addQuestion} className="gap-2 bg-purple-600 hover:bg-purple-700"><FaPlus />質問を追加</Button>
+              </div>
+            </div>
           </>
         )}
 
@@ -111,9 +199,9 @@ export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEn
                 <div className="mt-2 flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <span className="font-semibold text-slate-900">{creatorName}</span>
-                    <span className="ml-2 text-xs text-slate-500">作成者</span>
+                    {/* <span className="ml-2 text-xs text-slate-500">作成者</span> */}
                   </div>
-                  <div className="text-xs text-purple-700">固定メンバー（共同編集者設定では変更不可）</div>
+                  {/* <div className="text-xs text-purple-700">固定メンバー（共同編集者設定では変更不可）</div> */}
                 </div>
               </div>
 
@@ -123,20 +211,61 @@ export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEn
                 <div className="mt-3 space-y-3">
                   <Input value={collaboratorSearch} onChange={(event) => setCollaboratorSearch(event.target.value)} placeholder="氏名・組織名で検索" />
                   <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border bg-white p-2">
-                    {filteredCollaboratorOptions.map((option) => (
-                      <label key={option.id} className="flex items-center justify-between rounded-md px-2 py-2 text-sm hover:bg-slate-50">
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={selectedCollaboratorIds.includes(option.id)}
-                            onChange={() => toggleCollaborator(option.id)}
-                          />
-                          <span>{option.label}</span>
-                        </span>
-                        <span className="text-xs text-slate-400">{option.type}</span>
-                      </label>
-                    ))}
-                    {filteredCollaboratorOptions.length === 0 && <p className="px-2 py-3 text-xs text-slate-500">候補が見つかりません。</p>}
+                    {filteredCollaboratorDepartments.map((department) => {
+                      const memberIds = department.members.map((member) => member.id);
+                      const selectedCount = memberIds.filter((memberId) => selectedCollaboratorIds.includes(memberId)).length;
+                      const isChecked = selectedCount > 0 && selectedCount === memberIds.length;
+                      const isPartiallyChecked = selectedCount > 0 && selectedCount < memberIds.length;
+                      const isExpanded = expandedDepartmentIds.includes(department.id);
+                      const showMembers = isExpanded || selectedCount > 0 || Boolean(collaboratorSearch.trim());
+
+                      return (
+                        <div key={department.id} className="rounded-md border border-slate-200 bg-white">
+                          <div className="flex items-center justify-between rounded-md px-2 py-2 text-sm hover:bg-slate-50">
+                            <label className="flex flex-1 items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleDepartmentCollaborators(department.id)}
+                              />
+                              <span>{department.label}</span>
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500">
+                                {isPartiallyChecked ? `${selectedCount}/${memberIds.length} 選択` : `${memberIds.length}名`}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`${department.label}のメンバーを${showMembers ? "閉じる" : "開く"}`}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
+                                onClick={() => toggleDepartmentExpanded(department.id)}
+                              >
+                                <FaChevronDown className={showMembers ? "rotate-180 transition-transform" : "transition-transform"} />
+                              </button>
+                            </div>
+                          </div>
+                          {showMembers && (
+                            <div className="border-t bg-slate-50 px-2 py-2">
+                              <div className="space-y-1">
+                                {department.members.map((member) => (
+                                  <label key={member.id} className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-white">
+                                    <span className="ml-6 flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedCollaboratorIds.includes(member.id)}
+                                        onChange={() => toggleCollaboratorMember(member.id)}
+                                      />
+                                      <span>{member.label}</span>
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {filteredCollaboratorDepartments.length === 0 && <p className="px-2 py-3 text-xs text-slate-500">候補が見つかりません。</p>}
                   </div>
                 </div>
               </div>
@@ -146,12 +275,13 @@ export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEn
                 {selectedCollaborators.length === 0 ? (
                   <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">共同編集者が選択されていません。</div>
                 ) : (
-                  selectedCollaborators.map((collaborator) => (
-                    <div key={collaborator.id} className="flex flex-col gap-1 rounded-md bg-slate-50 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                      <div><span className="font-medium text-slate-900">{collaborator.label}</span><span className="ml-2 text-xs text-slate-500">{collaborator.type}</span></div>
-                      <div className="text-xs text-slate-500">編集権限あり</div>
-                    </div>
-                  ))
+                  <div className={`space-y-2 ${selectedCollaborators.length > 6 ? "max-h-80 overflow-y-auto pr-1" : ""}`}>
+                    {selectedCollaborators.map((collaborator) => (
+                      <div key={collaborator.id} className="flex flex-col gap-1 rounded-md bg-slate-50 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                        <div><span className="font-medium text-slate-900">{collaborator.label}</span><span className="ml-2 text-xs text-slate-500">{collaborator.departmentLabel}</span></div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </CardContent>
@@ -162,21 +292,22 @@ export function EditPage({ form, setForm, isDirty, saveNotice, sensors, onDragEn
   );
 }
 
-export function QuestionCard({ question: rawQuestion, index, updateQuestion, deleteQuestion, duplicateQuestion, moveQuestion, changeType, updateOption, addOption, deleteOption, totalQuestions, attributes, listeners, isDragging }) {
+export function QuestionCard({ question: rawQuestion, index, questionDomId, titleError, updateQuestion, deleteQuestion, duplicateQuestion, moveQuestion, changeType, updateOption, addOption, deleteOption, totalQuestions, attributes, listeners, isDragging }) {
   const question = normalizeQuestion(rawQuestion);
   const hasOptions = questionHasOptions(question.type);
   const questionTypeLabel = questionTypes.find((type) => type.value === question.type)?.label ?? "記述式";
+  const [draggingOptionIndex, setDraggingOptionIndex] = useState(null);
 
-  const moveOption = (optionIndex, direction) => {
-    const nextIndex = direction === "up" ? optionIndex - 1 : optionIndex + 1;
-    if (nextIndex < 0 || nextIndex >= question.options.length) return;
+  const moveOptionTo = (fromIndex, toIndex) => {
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= question.options.length || toIndex >= question.options.length) return;
     const nextOptions = [...question.options];
-    [nextOptions[optionIndex], nextOptions[nextIndex]] = [nextOptions[nextIndex], nextOptions[optionIndex]];
+    [nextOptions[fromIndex], nextOptions[toIndex]] = [nextOptions[toIndex], nextOptions[fromIndex]];
     updateQuestion(question.id, { options: nextOptions });
   };
 
   return (
-    <Card className={`border-l-4 border-l-purple-500 ${isDragging ? "shadow-2xl ring-2 ring-purple-300" : ""}`}>
+    <Card id={questionDomId} className={`scroll-mt-24 border-l-4 border-l-purple-500 ${isDragging ? "shadow-2xl ring-2 ring-purple-300" : ""}`}>
       <CardHeader className="flex flex-row items-center justify-between">
         <div className="flex items-center gap-3">
           <button aria-label={`質問${index + 1}をドラッグして並べ替え`} className="cursor-grab rounded p-2 text-slate-400 hover:bg-slate-100" {...attributes} {...listeners}><FaGripVertical /></button>
@@ -193,31 +324,51 @@ export function QuestionCard({ question: rawQuestion, index, updateQuestion, del
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px]">
-          <Input value={question.title} onChange={(event) => updateQuestion(question.id, { title: event.target.value })} />
+          <Input
+            id={`authoring-question-title-${question.id}`}
+            className="text-slate-900"
+            value={question.title}
+            placeholder={DEFAULT_QUESTION_TITLE}
+            onChange={(event) => updateQuestion(question.id, { title: event.target.value })}
+          />
           <Select value={question.type} onValueChange={(value) => changeType(question.id, value)}>
             <SelectTrigger><SelectValue>{questionTypeLabel}</SelectValue></SelectTrigger>
-            <SelectContent>{questionTypes.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}</SelectContent>
+            <SelectContent>{selectableQuestionTypes.map((type) => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-
-        <div className="grid grid-cols-1 gap-3">
-          <Input value={question.description} onChange={(event) => updateQuestion(question.id, { description: event.target.value })} placeholder="説明文（任意）" />
-        </div>
+        {titleError && <p className="text-sm text-red-600">{titleError}</p>}
 
         {hasOptions && (
           <div className="space-y-2">
             {question.options.map((option, optionIndex) => (
-              <div key={optionIndex} className="flex items-center gap-2">
+              <div
+                key={optionIndex}
+                draggable
+                onDragStart={() => setDraggingOptionIndex(optionIndex)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  if (draggingOptionIndex === null) return;
+                  moveOptionTo(draggingOptionIndex, optionIndex);
+                  setDraggingOptionIndex(null);
+                }}
+                onDragEnd={() => setDraggingOptionIndex(null)}
+                className={`flex items-center gap-2 rounded-md px-1 py-1 ${draggingOptionIndex === optionIndex ? "bg-slate-100" : ""}`}
+              >
+                <button
+                  type="button"
+                  draggable
+                  aria-label={`選択肢${optionIndex + 1}をドラッグして並べ替え`}
+                  className="cursor-grab rounded p-2 text-slate-400 hover:bg-slate-100"
+                >
+                  <FaGripVertical />
+                </button>
                 <span className="w-6 text-center text-sm text-slate-500">{question.type === "checkbox" ? "□" : question.type === "radio" ? "○" : optionIndex + 1}</span>
-                <Input value={option} onChange={(event) => updateOption(question.id, optionIndex, event.target.value)} />
-                <Button aria-label={`選択肢${optionIndex + 1}を上へ移動`} variant="ghost" size="icon" disabled={optionIndex === 0} onClick={() => moveOption(optionIndex, "up")}><FaArrowUp /></Button>
-                <Button aria-label={`選択肢${optionIndex + 1}を下へ移動`} variant="ghost" size="icon" disabled={optionIndex >= question.options.length - 1} onClick={() => moveOption(optionIndex, "down")}><FaArrowDown /></Button>
+                <Input value={option} placeholder={`選択肢${optionIndex + 1}`} onChange={(event) => updateOption(question.id, optionIndex, event.target.value)} />
                 <Button aria-label={`選択肢${optionIndex + 1}を削除`} variant="ghost" size="icon" disabled={question.options.length <= 1} onClick={() => deleteOption(question.id, optionIndex)}><FaTrash /></Button>
               </div>
             ))}
             <Button variant="outline" size="sm" onClick={() => addOption(question.id)}>選択肢追加</Button>
             <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={question.allowOther} onChange={(event) => updateQuestion(question.id, { allowOther: event.target.checked })} />「その他」を追加</label>
               <label className="flex items-center gap-2"><input type="checkbox" checked={question.randomizeOptions} onChange={(event) => updateQuestion(question.id, { randomizeOptions: event.target.checked })} />選択肢をランダム表示</label>
             </div>
           </div>

@@ -3,15 +3,22 @@ import { FaBell, FaBoxArchive, FaCheck, FaChevronDown, FaChevronUp, FaCopy, FaEl
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
-import { questionTypes } from "../../data/mockData";
 import { formatDeadline, getRespondentUrl, getResponsesForItem, getStatusClassName, getVisibilityLabel } from "../../utils/formBuilderUtils";
+
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 
 const actionStatusPriority = { "未回答": 0, "期限切れ": 1, "回答済み": 2 };
 const createdStatusPriority = { "下書き": 0, "公開中": 1, "終了": 2 };
 const actionStatuses = new Set(["未回答", "回答済み", "期限切れ"]);
+const visibleTemplateCount = 9;
 const toCreatedStatus = (status) => {
   if (status === "下書き") return "下書き";
   if (status === "公開中") return "公開中";
@@ -20,6 +27,7 @@ const toCreatedStatus = (status) => {
 
 export function HomePage({ templates, hoveredTemplate, hoveredTemplateId, setHoveredTemplateId, onStartBlank, onStartTemplate, onDuplicateTemplate, onDeleteTemplate, homeTab, setHomeTab, actionItems, createdForms, onOpenCreated, onShareCreated, onOpenResponses, onOpenVersions, onOpenPublish, onTogglePublishState, onToggleVisibility, onOpenRecipients, onOpenNotifications, onOpenReview, onDuplicate, onAddTemplate, onArchive, onDelete, currentRole }) {
   const [templatePanelOpen, setTemplatePanelOpen] = useState(false);
+  const [templateDeleteTarget, setTemplateDeleteTarget] = useState(null);
   const actionTabItems = actionItems
     .filter((item) => actionStatuses.has(item.status))
     .sort((a, b) => {
@@ -74,34 +82,28 @@ export function HomePage({ templates, hoveredTemplate, hoveredTemplateId, setHov
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
             <Card>
               <CardHeader><CardTitle className="flex items-center gap-2"><FaLayerGroup />テンプレートから作成</CardTitle></CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-3">
+              <CardContent className={`grid gap-3 ${templates.length > visibleTemplateCount ? "max-h-[calc(9*15rem+8*0.75rem)] overflow-y-auto pr-1 md:max-h-[calc(3*15rem+2*0.75rem)]" : ""} md:grid-cols-3`}>
                 {templates.map((template) => {
                   const Icon = template.icon;
                   const active = hoveredTemplateId === template.id;
                   return (
                     <div
                       key={template.id}
-                      className={`rounded-xl border bg-white p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${active ? "border-purple-400 ring-2 ring-purple-100" : "border-slate-200"}`}
+                      className={`flex min-h-40 flex-col rounded-xl border bg-white p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${active ? "border-purple-400 ring-2 ring-purple-100" : "border-slate-200"}`}
                     >
                       <div className="mb-3 flex items-center justify-between">
                         <div className="rounded-lg bg-purple-50 p-3 text-purple-600"><Icon /></div>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            type="button"
-                            aria-label={`${template.title}のテンプレート操作`}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
-                          >
-                            <FaEllipsisVertical />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem onClick={() => onDuplicateTemplate(template)}><FaCopy />複製</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => onDeleteTemplate(template)}><FaTrash />削除</DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <button
+                          type="button"
+                          aria-label={`${template.title}を削除`}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400"
+                          onClick={() => setTemplateDeleteTarget(template)}
+                        >
+                          <FaTrash />
+                        </button>
                       </div>
-                      <button type="button" onClick={() => setHoveredTemplateId(template.id)} className="w-full text-left">
+                      <button type="button" onClick={() => setHoveredTemplateId(template.id)} className="flex flex-1 flex-col text-left">
                         <div className="font-semibold text-slate-900">{template.title}</div>
-                        <p className="mt-2 text-sm leading-6 text-slate-500">{template.description}</p>
                       </button>
                     </div>
                   );
@@ -112,6 +114,21 @@ export function HomePage({ templates, hoveredTemplate, hoveredTemplateId, setHov
             <TemplatePreview template={hoveredTemplate} onStartTemplate={onStartTemplate} />
           </div>
         )}
+
+        <ConfirmDeleteDialog
+          open={Boolean(templateDeleteTarget)}
+          title="テンプレートを削除しますか？"
+          description={templateDeleteTarget ? `${templateDeleteTarget.title}を削除します。よろしいですか？` : ""}
+          confirmFirst
+          onOpenChange={(open) => {
+            if (!open) setTemplateDeleteTarget(null);
+          }}
+          onConfirm={() => {
+            if (!templateDeleteTarget) return;
+            onDeleteTemplate(templateDeleteTarget);
+            setTemplateDeleteTarget(null);
+          }}
+        />
       </section>
 
       <section id="home-tab-section" className="space-y-4">
@@ -128,29 +145,25 @@ export function HomePage({ templates, hoveredTemplate, hoveredTemplateId, setHov
 
 export function TemplatePreview({ template, onStartTemplate }) {
   const requiredCount = template.questions.filter((question) => question.required).length;
-  const questionTypeCount = new Set(template.questions.map((question) => question.type)).size;
 
   return (
     <Card className="lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:self-start lg:overflow-hidden">
       <CardHeader>
         <CardTitle className="text-lg">テンプレートプレビュー</CardTitle>
         <p className="text-sm text-slate-500">{template.title}</p>
-        <Button className="mt-2 w-full bg-purple-600 hover:bg-purple-700" onClick={() => onStartTemplate(template)}>テンプレートを適用</Button>
+        <Button className="mx-auto mt-2 w-full max-w-[18rem] bg-purple-600 hover:bg-purple-700" onClick={() => onStartTemplate(template)}>このテンプレートを適用</Button>
       </CardHeader>
       <CardContent className="max-h-[70vh] space-y-3 overflow-y-auto pr-3 lg:max-h-[calc(100vh-14rem)]">
         <div className="rounded-xl border-t-8 border-t-purple-600 bg-white p-4 shadow-sm">
           <div className="text-xl font-bold">{template.title}</div>
-          <p className="mt-2 text-sm text-slate-500">{template.description}</p>
-          <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs">
             <div className="rounded-lg bg-slate-50 p-2"><div className="font-semibold text-slate-900">{template.questions.length}</div><div className="text-slate-500">質問</div></div>
             <div className="rounded-lg bg-slate-50 p-2"><div className="font-semibold text-slate-900">{requiredCount}</div><div className="text-slate-500">必須</div></div>
-            <div className="rounded-lg bg-slate-50 p-2"><div className="font-semibold text-slate-900">{questionTypeCount}</div><div className="text-slate-500">形式</div></div>
           </div>
         </div>
         {template.questions.map((question) => (
           <div key={question.title} className="rounded-xl border bg-white p-4 shadow-sm">
             <div className="font-medium">{question.title}{question.required && <span className="ml-1 text-red-500">*</span>}</div>
-            <p className="mt-1 text-xs text-slate-500">{questionTypes.find((type) => type.value === question.type)?.label}</p>
           </div>
         ))}
       </CardContent>
@@ -170,9 +183,11 @@ export function TabButton({ active, count, onClick, children }) {
 export function ActionList({ items }) {
   const [showAnsweredItems, setShowAnsweredItems] = useState(false);
   const [removedExpiredItemIds, setRemovedExpiredItemIds] = useState([]);
+  const [expiredDeleteTargetId, setExpiredDeleteTargetId] = useState(null);
   const visibleItems = items
     .filter((item) => showAnsweredItems || item.status !== "回答済み")
     .filter((item) => !removedExpiredItemIds.includes(item.id));
+  const expiredDeleteTarget = items.find((item) => item.id === expiredDeleteTargetId) ?? null;
 
   const removeExpiredItem = (itemId) => {
     setRemovedExpiredItemIds((current) => current.includes(itemId) ? current : [...current, itemId]);
@@ -208,7 +223,7 @@ export function ActionList({ items }) {
               <Button
                 variant="outline"
                 className="border-red-200 text-red-700 hover:bg-red-50"
-                onClick={() => removeExpiredItem(item.id)}
+                onClick={() => setExpiredDeleteTargetId(item.id)}
               >
                 削除
               </Button>
@@ -226,13 +241,54 @@ export function ActionList({ items }) {
         </Card>
       ))}
       {visibleItems.length === 0 && <Card><CardContent className="p-6 text-center text-sm text-slate-500">表示できるアンケートはありません。</CardContent></Card>}
+
+      <ConfirmDeleteDialog
+        open={Boolean(expiredDeleteTarget)}
+        title="アンケートを削除しますか？"
+        description={expiredDeleteTarget ? `${expiredDeleteTarget.title}を削除します。よろしいですか？` : ""}
+        onOpenChange={(open) => {
+          if (!open) setExpiredDeleteTargetId(null);
+        }}
+        onConfirm={() => {
+          if (!expiredDeleteTargetId) return;
+          removeExpiredItem(expiredDeleteTargetId);
+          setExpiredDeleteTargetId(null);
+        }}
+      />
     </div>
+  );
+}
+
+function ConfirmDeleteDialog({ open, title, description, onOpenChange, onConfirm, confirmFirst = false }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description || "削除しますか？"}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          {confirmFirst ? (
+            <>
+              <Button variant="destructive" onClick={onConfirm}>削除</Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>キャンセル</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>キャンセル</Button>
+              <Button variant="destructive" onClick={onConfirm}>削除</Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 export function CreatedList({ items, onOpen, onShare, onResponses, onVersions, onToggleVisibility, onRecipients, onNotifications, onReview, onDuplicate, onAddTemplate, onArchive, onDelete, currentRole }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [createdDeleteTarget, setCreatedDeleteTarget] = useState(null);
   const filteredItems = items
     .filter((item) => {
       const displayStatus = toCreatedStatus(item.status);
@@ -274,6 +330,7 @@ export function CreatedList({ items, onOpen, onShare, onResponses, onVersions, o
               </div>
               <div className="flex flex-wrap gap-2 md:justify-end">
                 {displayStatus === "下書き" && <Button className="bg-purple-600 hover:bg-purple-700" disabled={!currentRole.canEdit} onClick={() => onOpen(item, "edit")}>編集</Button>}
+                {(displayStatus === "公開中" || displayStatus === "終了") && <Button variant="outline" onClick={() => onOpen(item, "preview", { fromManagementPreview: true })}>プレビュー</Button>}
                 {displayStatus !== "下書き" && <Button variant="outline" onClick={() => onResponses(item)}>集計</Button>}
                 {displayStatus === "公開中" && <Button variant="outline" onClick={() => onShare(item)}>共有</Button>}
                 <DropdownMenu>
@@ -284,7 +341,7 @@ export function CreatedList({ items, onOpen, onShare, onResponses, onVersions, o
                     <DropdownMenuItem disabled={!currentRole.canPublish} onClick={() => onToggleVisibility(item)}>{displayStatus === "公開中" ? <><FaEyeSlash />終了する</> : <><FaEye />公開する</>}</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onDuplicate(item)}><FaCopy />複製</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => onAddTemplate(item)}><FaBoxArchive />テンプレートに追加</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onDelete(item)}><FaTrash />削除</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setCreatedDeleteTarget(item)}><FaTrash />削除</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
@@ -294,6 +351,21 @@ export function CreatedList({ items, onOpen, onShare, onResponses, onVersions, o
         );
       })}
       {filteredItems.length === 0 && <Card><CardContent className="p-6 text-center text-sm text-slate-500">条件に一致するフォームはありません。</CardContent></Card>}
+
+      <ConfirmDeleteDialog
+        open={Boolean(createdDeleteTarget)}
+        title="アンケートを削除しますか？"
+        description={createdDeleteTarget ? `${createdDeleteTarget.title}を削除します。よろしいですか？` : ""}
+        confirmFirst
+        onOpenChange={(open) => {
+          if (!open) setCreatedDeleteTarget(null);
+        }}
+        onConfirm={() => {
+          if (!createdDeleteTarget) return;
+          onDelete(createdDeleteTarget);
+          setCreatedDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }

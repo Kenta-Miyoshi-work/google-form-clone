@@ -111,6 +111,18 @@ export function getVersionsForItem(item) {
   ];
 }
 
+export const DEFAULT_FORM_TITLE = "フォームの題名を入力";
+export const DEFAULT_QUESTION_TITLE = "新しい質問";
+export const DEFAULT_FORM_DESCRIPTION = "フォームの説明を入力してください。";
+
+export function isBlankAuthoringFormTitle(value) {
+  return !value?.trim() || value.trim() === DEFAULT_FORM_TITLE;
+}
+
+export function isBlankAuthoringQuestionTitle(value) {
+  return !value?.trim() || value.trim() === DEFAULT_QUESTION_TITLE;
+}
+
 export function getResponsesForItem(item) {
   if (!item) return [];
   const storedRecords = getStoredResponseRecords();
@@ -213,6 +225,7 @@ export function createCreatedItemFromForm(form, existingItem = {}, status = "下
   return {
     id: existingItem.id ?? `local-${safeId()}`,
     title: form.title || "無題のフォーム",
+      title: form.title || "フォームの題名を入力",
     status,
     updatedAt: formatNow(),
     responses: getResponsesForItem(existingItem).length,
@@ -414,7 +427,9 @@ export function getPublishChecklistForForm(form, recipients = [], notificationRu
   const sections = normalizeSections(form.sections);
   const questions = Array.isArray(form.questions) ? form.questions.map((question) => normalizeQuestion(question)) : [];
   return [
-    { label: "フォームタイトルと説明", ok: Boolean(form.title?.trim()) && Boolean(form.description?.trim()) },
+    { label: "フォームタイトルが入力されている", ok: !isBlankAuthoringFormTitle(form.title) },
+    { label: "フォーム説明が入力されている", ok: Boolean(form.description?.trim()) },
+    { label: "質問タイトルがすべて入力されている", ok: questions.every((question) => !isBlankAuthoringQuestionTitle(question.title)) },
     { label: "質問が1件以上ある", ok: questions.length > 0 },
     { label: "必須質問が設定されている", ok: questions.some((question) => question.required) },
     { label: "全質問がセクションに紐づいている", ok: questions.every((question) => sections.some((section) => section.id === question.sectionId)) },
@@ -490,13 +505,13 @@ export function createQuestionDefaults(type = "shortText") {
   const optionType = questionHasOptions(normalizedType);
   return {
     type: normalizedType,
-    title: "新しい質問",
+    title: "",
     description: "",
     showDescription: true,
     placeholder: "",
     example: "",
     required: false,
-    options: optionType ? ["選択肢1", "選択肢2"] : [],
+    options: optionType ? ["", ""] : [],
     allowOther: false,
     randomizeOptions: false,
     rows: [],
@@ -520,18 +535,22 @@ export function normalizeQuestion(value = {}) {
   const scaleMin = Number(value.scaleMin ?? defaults.scaleMin);
   const scaleMax = Number(value.scaleMax ?? defaults.scaleMax);
   const maxFiles = Number(value.maxFiles ?? defaults.maxFiles);
+  const normalizedOptions = (Array.isArray(value.options) ? value.options : defaults.options).map((option, index) => {
+    if (typeof option !== "string") return "";
+    return option === `選択肢${index + 1}` ? "" : option;
+  });
   return {
     ...defaults,
     id: value.id ?? safeId(),
     sectionId: value.sectionId ?? "section-1",
     type,
-    title: typeof value.title === "string" ? value.title : defaults.title,
+    title: typeof value.title === "string" ? (value.title === DEFAULT_QUESTION_TITLE ? "" : value.title) : defaults.title,
     description: typeof value.description === "string" ? value.description : "",
     showDescription: typeof value.showDescription === "boolean" ? value.showDescription : true,
     placeholder: typeof value.placeholder === "string" ? value.placeholder : "",
     example: typeof value.example === "string" ? value.example : "",
     required: Boolean(value.required),
-    options: Array.isArray(value.options) ? value.options : defaults.options,
+    options: normalizedOptions,
     allowOther: Boolean(value.allowOther),
     randomizeOptions: Boolean(value.randomizeOptions),
     rows: Array.isArray(value.rows) ? value.rows : defaults.rows,
@@ -655,29 +674,21 @@ export function normalizeVisibilityCondition(value) {
 }
 
 export function getTemplateSections(template) {
-  if (template.questions.length <= 6) return createDefaultSections();
-  return [
-    { id: "section-1", title: "基本情報", description: "回答者と概要を確認します。" },
-    { id: "section-2", title: "希望・選択", description: "希望内容や選択項目を確認します。" },
-    { id: "section-3", title: "詳細確認", description: "補足事項を入力します。" },
-  ];
+  return createDefaultSections();
 }
 
 export function getSectionIdForTemplateQuestion(template, index) {
-  if (template.questions.length <= 6) return "section-1";
-  if (index < Math.ceil(template.questions.length / 3)) return "section-1";
-  if (index < Math.ceil((template.questions.length * 2) / 3)) return "section-2";
   return "section-3";
 }
 
 export function createBlankForm() {
   return {
     version: 1,
-    title: "無題のフォーム",
-    description: "フォームの説明を入力してください。",
+    title: "",
+    description: "",
     settings: createDefaultSettings(),
     sections: createDefaultSections(),
-    questions: [{ id: safeId(), sectionId: "section-1", type: "shortText", title: "氏名", description: "", required: true, options: [], branch: normalizeBranch() }],
+    questions: [{ id: safeId(), sectionId: "section-1", type: "shortText", title: "", description: "", required: true, options: [], branch: normalizeBranch() }],
   };
 }
 
@@ -742,10 +753,12 @@ export function normalizeForm(value) {
   if (!value || typeof value !== "object") throw new Error("JSONの形式が不正です。");
   const sections = normalizeSections(value.sections);
   const sectionLookup = createSectionLookup(sections);
+  const rawTitle = typeof value.title === "string" ? value.title : "";
+  const rawDescription = typeof value.description === "string" ? value.description : "";
   return {
     version: value.version ?? 1,
-    title: value.title ?? "無題のフォーム",
-    description: value.description ?? "",
+    title: rawTitle === DEFAULT_FORM_TITLE ? "" : rawTitle,
+    description: rawDescription === DEFAULT_FORM_DESCRIPTION ? "" : rawDescription,
     settings: normalizeSettings(value.settings),
     sections,
     questions: Array.isArray(value.questions) ? value.questions.map((question) => normalizeQuestion({

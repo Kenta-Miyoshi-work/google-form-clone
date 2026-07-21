@@ -24,6 +24,10 @@ function isReviewMode() {
   return /[?&]mode=review(?:&|$)/.test(window.location.hash);
 }
 
+function isPreviewMode() {
+  return /[?&]mode=preview(?:&|$)/.test(window.location.hash);
+}
+
 export function FormHeaderCard({ form }) {
   const settings = form.settings ?? createDefaultSettings();
 
@@ -38,7 +42,7 @@ export function FormHeaderCard({ form }) {
         <div className="mt-3 grid gap-2 text-sm">
           <div className="flex items-center gap-2 rounded-md bg-slate-50 px-3 py-2 text-slate-600">
             <FaCalendarDays style={{ color: settings.themeColor }} />
-            <span>公開期限: {formatDeadline(settings.deadline)}</span>
+            <span>回答期限: {formatDeadline(settings.deadline)}</span>
           </div>
         </div>
       </CardHeader>
@@ -46,7 +50,7 @@ export function FormHeaderCard({ form }) {
   );
 }
 
-export function SubmissionComplete({ settings, respondentEmail, onEdit }) {
+export function SubmissionComplete({ settings, onEdit }) {
   return (
     <main className="mx-auto max-w-3xl p-4 md:p-8">
       <Card className="border-t-8" style={{ borderTopColor: settings.themeColor }}>
@@ -56,10 +60,11 @@ export function SubmissionComplete({ settings, respondentEmail, onEdit }) {
             <h2 className="text-2xl font-bold text-slate-900">ご回答ありがとうございました</h2>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">回答を受け付けました。</p>
           </div>
-          <div className="mx-auto max-w-md rounded-lg bg-slate-50 p-4 text-left text-sm text-slate-600">
-            {settings.sendReceipt ? <p>回答コピーを {respondentEmail} 宛に送信した想定です。</p> : <p>回答コピーの送信は設定されていません。</p>}
-            {settings.allowEditAfterSubmit && <Button className="mt-3" variant="outline" onClick={onEdit}>回答編集</Button>}
-          </div>
+          {settings.allowEditAfterSubmit && (
+            <div className="mx-auto max-w-md rounded-lg bg-slate-50 p-4 text-left text-sm text-slate-600">
+              <Button variant="outline" onClick={onEdit}>回答編集</Button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </main>
@@ -83,7 +88,7 @@ export function AlreadyAnsweredPage({ form, settings, respondentEmail, onEdit })
   );
 }
 
-export function RespondentFormPage({ form, respondentEmail, showHeader = true }) {
+export function RespondentFormPage({ form, respondentEmail, showHeader = true, previewMode = false }) {
   return (
     <div className="min-h-screen bg-slate-100">
       {showHeader && (
@@ -94,7 +99,7 @@ export function RespondentFormPage({ form, respondentEmail, showHeader = true })
           </div>
         </header>
       )}
-      <AnswerForm form={form} submitLabel="回答送信" respondentEmail={respondentEmail} />
+      <AnswerForm form={form} submitLabel="回答送信" respondentEmail={respondentEmail} previewMode={previewMode} />
     </div>
   );
 }
@@ -107,23 +112,6 @@ function getUnavailableReason(settings) {
     if (!Number.isNaN(deadline.getTime()) && deadline.getTime() < Date.now()) return "公開期限を過ぎているため、回答できません。";
   }
   return "";
-}
-
-function ResponsePolicyNote({ settings }) {
-  const identityText = settings.anonymousResponses
-    ? "匿名で回答できます。"
-    : settings.collectEmail
-      ? "ログイン中のメールアドレスと回答が紐づきます。"
-      : "メールアドレスは収集されません。";
-  const editText = settings.allowEditAfterSubmit ? "送信後も回答を編集できます。" : "送信後の編集はできません。";
-  const countText = settings.limitOneResponse ? "回答は1回のみです。" : "必要に応じて再回答できます。";
-  const receiptText = settings.sendReceipt ? "送信後に回答コピーが送信されます。" : "";
-
-  return (
-    <div className="rounded-lg border bg-white/80 px-4 py-3 text-xs leading-5 text-slate-500 shadow-sm">
-      <span className="font-medium text-slate-700">回答前の確認:</span> {[identityText, editText, countText, receiptText].filter(Boolean).join(" ")}
-    </div>
-  );
 }
 
 export function UnavailableFormPage({ form }) {
@@ -154,10 +142,10 @@ function isAnswered(question, value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function getValidationError(question, value) {
+function getValidationError(question, value, { ignoreRequired = false } = {}) {
   const validation = question.validation ?? {};
   const message = validation.errorMessage || "入力内容を確認してください。";
-  if (question.required && !isAnswered(question, value)) return "この質問は必須です。";
+  if (!ignoreRequired && question.required && !isAnswered(question, value)) return "この質問は必須です。";
   if (!isAnswered(question, value)) return "";
   if (["shortText", "paragraph", "email"].includes(question.type) && typeof value === "string") {
     if (validation.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return message;
@@ -177,28 +165,26 @@ function getValidationError(question, value) {
 
 function getProgressCounts(questions, values) {
   const requiredQuestions = questions.filter((question) => question.required);
-  const optionalQuestions = questions.filter((question) => !question.required);
+  const answeredCount = requiredQuestions.filter((question) => isAnswered(question, values[question.id])).length;
   return {
-    requiredDone: requiredQuestions.filter((question) => isAnswered(question, values[question.id])).length,
-    requiredTotal: requiredQuestions.length,
-    optionalDone: optionalQuestions.filter((question) => isAnswered(question, values[question.id])).length,
-    optionalTotal: optionalQuestions.length,
+    answeredCount,
+    totalCount: requiredQuestions.length,
   };
 }
 
 export function AnswerProgress({ questions, values, currentSectionIndex, totalSections }) {
   const progress = getProgressCounts(questions, values);
-  const requiredPercent = progress.requiredTotal ? Math.round((progress.requiredDone / progress.requiredTotal) * 100) : 100;
+  const answeredPercent = progress.totalCount ? Math.round((progress.answeredCount / progress.totalCount) * 100) : 100;
 
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-          <span className="font-medium text-slate-700">進捗: セクション {currentSectionIndex + 1} / {totalSections}</span>
-          <span className="text-slate-500">必須 {progress.requiredDone}/{progress.requiredTotal} ・ 任意 {progress.optionalDone}/{progress.optionalTotal}</span>
+          <span className="font-medium text-slate-700">進捗: </span>
+          <span className="text-slate-500">必須回答済み {progress.answeredCount}/{progress.totalCount}</span>
         </div>
         <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full bg-purple-600 transition-all" style={{ width: `${requiredPercent}%` }} />
+          <div className="h-full bg-purple-600 transition-all" style={{ width: `${answeredPercent}%` }} />
         </div>
       </CardContent>
     </Card>
@@ -222,27 +208,26 @@ function isQuestionVisible(question, values) {
   return Array.isArray(sourceValue) ? sourceValue.includes(condition.option) : sourceValue === condition.option;
 }
 
-export function AnswerForm({ form, submitLabel = "送信", respondentEmail = "login@example.com" }) {
-  const [sectionId, setSectionId] = useState((form.sections ?? createDefaultSections())[0]?.id ?? "section-1");
+export function AnswerForm({ form, submitLabel = "送信", respondentEmail = "login@example.com", previewMode = false }) {
   const formResponseKey = form.id ?? form.title ?? "preview-form";
   const [responseState, setResponseState] = useState(() => getStoredResponseState(formResponseKey));
   const [values, setValues] = useState(() => responseState?.values ?? {});
   const [errors, setErrors] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const settings = form.settings ?? createDefaultSettings();
-  const sections = normalizeSections(form.sections);
-  const currentSectionIndex = Math.max(0, sections.findIndex((section) => section.id === sectionId));
-  const currentSection = sections[currentSectionIndex] ?? sections[0];
+  const sections = createDefaultSections();
+  const currentSectionIndex = 0;
+  const currentSection = sections[0];
   const questions = form.questions.map((question) => normalizeQuestion(question));
-  const currentQuestions = questions.filter((question) => (question.sectionId ?? "section-1") === currentSection.id && isQuestionVisible(question, values));
+  const currentQuestions = questions.filter((question) => isQuestionVisible(question, values));
   const unavailableReason = getUnavailableReason(settings);
   const buttonLabel = settings.submitButtonLabel || submitLabel;
   const reviewMode = isReviewMode();
+  const effectivePreviewMode = previewMode || isPreviewMode();
 
   const startEditingSubmittedResponse = () => {
     setSubmitted(false);
     setResponseState((current) => ({ ...(current ?? {}), editing: true }));
-    setSectionId(sections[0]?.id ?? "section-1");
   };
 
   const mappedReviewAnswers = Object.fromEntries(
@@ -252,7 +237,7 @@ export function AnswerForm({ form, submitLabel = "送信", respondentEmail = "lo
     ? mappedReviewAnswers
     : (form.reviewAnswers ?? null);
 
-  if (submitted) return <SubmissionComplete settings={settings} respondentEmail={respondentEmail} onEdit={startEditingSubmittedResponse} />;
+  if (submitted) return <SubmissionComplete settings={settings} onEdit={startEditingSubmittedResponse} />;
   if (reviewMode) {
     return (
       <main className="mx-auto max-w-3xl space-y-4 p-4 md:p-8" style={{ backgroundColor: settings.backgroundColor }}>
@@ -275,7 +260,7 @@ export function AnswerForm({ form, submitLabel = "送信", respondentEmail = "lo
     );
   }
   if (unavailableReason) return <UnavailableFormPage form={form} />;
-  if (settings.limitOneResponse && responseState?.submitted && !responseState.editing) return <AlreadyAnsweredPage form={form} settings={settings} respondentEmail={respondentEmail} onEdit={startEditingSubmittedResponse} />;
+  if (!effectivePreviewMode && settings.limitOneResponse && responseState?.submitted && !responseState.editing) return <AlreadyAnsweredPage form={form} settings={settings} respondentEmail={respondentEmail} onEdit={startEditingSubmittedResponse} />;
 
   const completeSubmission = () => {
     const nextResponseState = { submitted: true, editing: false, values, submittedAt: new Date().toISOString(), respondentEmail };
@@ -290,38 +275,40 @@ export function AnswerForm({ form, submitLabel = "送信", respondentEmail = "lo
     setErrors((current) => ({ ...current, [question.id]: "" }));
   };
 
-  const validateCurrentSection = () => {
+  const validateCurrentSection = (options = {}) => {
+    const { ignoreRequired = false } = options;
     const nextErrors = {};
     currentQuestions.forEach((question) => {
-      const error = getValidationError(question, values[question.id]);
+      const error = getValidationError(question, values[question.id], { ignoreRequired });
       if (error) nextErrors[question.id] = error;
     });
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
-  const goNext = () => {
-    if (!validateCurrentSection()) return;
-    const branchTarget = getBranchTarget(currentQuestions, values);
-    if (branchTarget === "__submit__") { completeSubmission(); return; }
-    if (branchTarget && sections.some((section) => section.id === branchTarget)) { setSectionId(branchTarget); return; }
-    if (currentSectionIndex >= sections.length - 1) { completeSubmission(); return; }
-    setSectionId(sections[currentSectionIndex + 1].id);
+  const submitAnswers = () => {
+    if (!validateCurrentSection({ ignoreRequired: effectivePreviewMode })) return;
+    if (effectivePreviewMode) return;
+    completeSubmission();
   };
 
   return (
     <main className="mx-auto max-w-3xl space-y-4 p-4 md:p-8" style={{ backgroundColor: settings.backgroundColor }}>
       <FormHeaderCard form={form} />
-      {settings.showProgress && <AnswerProgress questions={questions} values={values} currentSectionIndex={currentSectionIndex} totalSections={sections.length} />}
+      {settings.showProgress && (
+        <div className="sticky top-20 z-30 md:top-24">
+          <AnswerProgress questions={currentQuestions} values={values} currentSectionIndex={currentSectionIndex} totalSections={sections.length} />
+        </div>
+      )}
 
-      <ResponsePolicyNote settings={settings} />
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-xl">{currentSection.title}</CardTitle>
-          {currentSection.description && <p className="text-sm text-slate-500">{currentSection.description}</p>}
-        </CardHeader>
-      </Card>
+      {(currentSection.title !== "基本情報" || currentSection.description) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xl">{currentSection.title}</CardTitle>
+            {currentSection.description && <p className="text-sm text-slate-500">{currentSection.description}</p>}
+          </CardHeader>
+        </Card>
+      )}
 
       {currentQuestions.map((question) => (
         <Card key={question.id} className={errors[question.id] ? "border-red-300" : ""}>
@@ -339,15 +326,31 @@ export function AnswerForm({ form, submitLabel = "送信", respondentEmail = "lo
       ))}
 
       <div className="flex justify-between gap-2 pb-12">
-        {currentSectionIndex > 0 ? <Button variant="outline" onClick={() => setSectionId(sections[currentSectionIndex - 1].id)}>前画面</Button> : <span />}
-        <Button style={{ backgroundColor: settings.themeColor }} onClick={goNext}>{currentSectionIndex >= sections.length - 1 ? buttonLabel : "次画面"}</Button>
+        <span />
+        {!effectivePreviewMode && <Button style={{ backgroundColor: settings.themeColor }} onClick={submitAnswers}>{buttonLabel}</Button>}
       </div>
     </main>
   );
 }
 
 export function PreviewPage({ form }) {
-  return <AnswerForm form={form} submitLabel="送信" respondentEmail="preview@example.com" />;
+  return <AnswerForm form={form} submitLabel="送信" respondentEmail="preview@example.com" previewMode />;
+}
+
+export function SystemErrorPage({ onBackToLogin }) {
+  return (
+    <main className="mx-auto max-w-3xl p-4 md:p-8">
+      <Card className="border-t-8 border-t-red-500">
+        <CardHeader className="text-center">
+          <CardTitle className="text-2xl">システムエラーが発生しました</CardTitle>
+          <p className="text-sm text-slate-600">時間をおいて再度お試しください。解消しない場合は管理者へお問い合わせください。</p>
+        </CardHeader>
+        <CardContent className="text-center">
+          <Button className="bg-purple-600 hover:bg-purple-700" onClick={onBackToLogin}>ログイン画面へ戻る</Button>
+        </CardContent>
+      </Card>
+    </main>
+  );
 }
 
 function getFileAcceptAttribute(fileTypes = []) {
@@ -365,18 +368,17 @@ export function PreviewControl({ question, value, onChange }) {
   const update = onChange ?? (() => {});
   const placeholder = question.placeholder || "回答を入力";
   const options = question.randomizeOptions ? [...question.options].reverse() : question.options;
-  const optionsWithOther = question.allowOther ? [...options, "その他"] : options;
   if (question.type === "paragraph") return <Textarea placeholder={placeholder} value={value ?? ""} onChange={(event) => update(event.target.value)} />;
   if (question.type === "email") return <Input type="email" placeholder={question.placeholder || "name@example.com"} value={value ?? ""} onChange={(event) => update(event.target.value)} />;
   if (question.type === "number") return <Input type="number" placeholder={placeholder} value={value ?? ""} onChange={(event) => update(event.target.value)} />;
   if (question.type === "date") return <Input type="date" value={value ?? ""} onChange={(event) => update(event.target.value)} />;
   if (question.type === "time") return <Input type="time" value={value ?? ""} onChange={(event) => update(event.target.value)} />;
-  if (question.type === "radio") return <div className="space-y-2">{optionsWithOther.map((option) => <label key={option} className="flex items-center gap-2 text-sm"><input type="radio" name={question.id} checked={value === option} onChange={() => update(option)} />{option}</label>)}</div>;
+  if (question.type === "radio") return <div className="space-y-2">{options.map((option) => <label key={option} className="flex items-center gap-2 text-sm"><input type="radio" name={question.id} checked={value === option} onChange={() => update(option)} />{option}</label>)}</div>;
   if (question.type === "checkbox") {
     const currentValue = Array.isArray(value) ? value : [];
-    return <div className="space-y-2">{optionsWithOther.map((option) => <label key={option} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={currentValue.includes(option)} onChange={(event) => update(event.target.checked ? [...currentValue, option] : currentValue.filter((item) => item !== option))} />{option}</label>)}</div>;
+    return <div className="space-y-2">{options.map((option) => <label key={option} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={currentValue.includes(option)} onChange={(event) => update(event.target.checked ? [...currentValue, option] : currentValue.filter((item) => item !== option))} />{option}</label>)}</div>;
   }
-  if (question.type === "select") return <select className="w-full rounded-md border bg-white px-3 py-2 text-sm" value={value ?? ""} onChange={(event) => update(event.target.value)}><option value="">選択してください</option>{optionsWithOther.map((option) => <option key={option} value={option}>{option}</option>)}</select>;
+  if (question.type === "select") return <select className="w-full rounded-md border bg-white px-3 py-2 text-sm" value={value ?? ""} onChange={(event) => update(event.target.value)}><option value="">選択してください</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select>;
   if (question.type === "rating") {
     const scaleValues = Array.from({ length: Math.max(1, question.scaleMax - question.scaleMin + 1) }, (_, index) => String(question.scaleMin + index));
     return <div className="space-y-2"><div className="flex flex-wrap gap-2">{scaleValues.map((scaleValue) => <label key={scaleValue} className="flex size-10 items-center justify-center rounded-full border bg-white text-sm"><input className="sr-only" type="radio" name={question.id} checked={value === scaleValue} onChange={() => update(scaleValue)} />{scaleValue}</label>)}</div><div className="flex justify-between text-xs text-slate-500"><span>{question.scaleMinLabel}</span><span>{question.scaleMaxLabel}</span></div></div>;
